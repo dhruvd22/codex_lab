@@ -1,6 +1,6 @@
-name: koyeb-fastapi
+name: projectplanner
 services:
-  - name: fastapi-service
+  - name: planner
     type: web
     source:
       type: docker

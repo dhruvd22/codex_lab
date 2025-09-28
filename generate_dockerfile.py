@@ -1,56 +1,64 @@
 #!/usr/bin/env python3
-"""
-Script to generate Dockerfile for the FastAPI Koyeb application.
-This script can be run locally or in CI/CD pipelines.
-"""
+"""Generate the multi-stage Dockerfile for the Project Planner service."""
 
 from pathlib import Path
 from textwrap import dedent
 import sys
 
-def generate_dockerfile():
-    """Generate a Dockerfile for the FastAPI application."""
-    dockerfile = dedent("""\
-    FROM python:3.11-slim
+DOCKERFILE_TEMPLATE = dedent("""\
+# syntax=docker/dockerfile:1
 
-    WORKDIR /app
+FROM node:20-bullseye-slim AS ui-builder
+WORKDIR /ui
 
-    COPY requirements.txt ./
-    RUN pip install --no-cache-dir -r requirements.txt
+COPY projectplanner/ui/package.json ./
+RUN npm install
+COPY projectplanner/ui/ ./
+ENV NEXT_PUBLIC_API_URL=""
+RUN npm run build
 
-    COPY . .
+FROM python:3.11-slim AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
-    EXPOSE 8000
+WORKDIR /app
 
-    CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-    """)
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+COPY --from=ui-builder /ui/out ./projectplanner/ui/out
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+""")
+
+
+def generate_dockerfile() -> bool:
+    """Write the Dockerfile to disk."""
 
     try:
-        Path("Dockerfile").write_text(dockerfile, encoding="utf-8")
-        print("✅ Generated Dockerfile successfully")
+        Path("Dockerfile").write_text(DOCKERFILE_TEMPLATE, encoding="utf-8")
         return True
-    except Exception as e:
-        print(f"❌ Error generating Dockerfile: {e}")
+    except OSError as exc:
+        print(f"Error generating Dockerfile: {exc}")
         return False
 
-def main():
-    """Main function to run the Dockerfile generation."""
-    print("🐳 Generating Dockerfile...")
-    
+
+def main() -> None:
+    """Entry point for the generator script."""
+
+    print("Generating Dockerfile...")
     if not generate_dockerfile():
         sys.exit(1)
-    
-    print("\n📄 Generated Dockerfile content:")
+
+    print("\nDockerfile content:")
     print("-" * 40)
-    try:
-        with open("Dockerfile", "r", encoding="utf-8") as f:
-            print(f.read())
-    except Exception as e:
-        print(f"❌ Error reading generated Dockerfile: {e}")
-        sys.exit(1)
-    
+    print(DOCKERFILE_TEMPLATE)
     print("-" * 40)
-    print("🎉 Dockerfile generation completed successfully!")
+    print("Dockerfile generation completed successfully.")
+
 
 if __name__ == "__main__":
     main()

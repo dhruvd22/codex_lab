@@ -164,8 +164,8 @@ async def export_prompts(payload: ExportRequest, *, store: ProjectPlannerStore) 
 
 
 def _to_yaml(plan: PromptPlan, steps: List[PromptStep], report: AgentReport | None) -> str:
-    lines: List[str] = ["plan:", f"  context: |
-    {plan.context}"]
+    lines: List[str] = ["plan:", "  context: |"]
+    lines.extend(f"    {line}" for line in plan.context.splitlines())
     for field in ("goals", "assumptions", "non_goals", "risks", "milestones"):
         lines.append(f"  {field}:")
         for item in getattr(plan, field):
@@ -175,10 +175,10 @@ def _to_yaml(plan: PromptPlan, steps: List[PromptStep], report: AgentReport | No
         lines.append(f"  - id: {step.id}")
         lines.append(f"    title: {step.title}")
         lines.append("    system_prompt: |")
-        for line in step.system_prompt.split("\n"):
+        for line in step.system_prompt.splitlines():
             lines.append(f"      {line}")
         lines.append("    user_prompt: |")
-        for line in step.user_prompt.split("\n"):
+        for line in step.user_prompt.splitlines():
             lines.append(f"      {line}")
         lines.append("    expected_artifacts:")
         for artifact in step.expected_artifacts:
@@ -201,8 +201,7 @@ def _to_yaml(plan: PromptPlan, steps: List[PromptStep], report: AgentReport | No
         lines.append("  concerns:")
         for item in report.concerns:
             lines.append(f"    - {item}")
-    return "
-".join(lines)
+    return "\n".join(lines)
 
 
 def _to_jsonl(plan: PromptPlan, steps: List[PromptStep], report: AgentReport | None) -> str:
@@ -211,39 +210,45 @@ def _to_jsonl(plan: PromptPlan, steps: List[PromptStep], report: AgentReport | N
         bundle.append({"type": "step", "payload": step.dict()})
     if report:
         bundle.append({"type": "report", "payload": report.dict()})
-    return "
-".join(json.dumps(item) for item in bundle)
+    return "\n".join(json.dumps(item) for item in bundle)
 
 
 def _to_markdown(plan: PromptPlan, steps: List[PromptStep], report: AgentReport | None) -> str:
     lines = ["# Project Plan", "", f"**Context**: {plan.context}"]
     for heading in ("goals", "assumptions", "non_goals", "risks", "milestones"):
+        section = getattr(plan, heading)
+        if section:
+            lines.append(f"## {heading.replace('_', ' ').title()}")
+            for item in section:
+                lines.append(f"- {item}")
+            lines.append("")
+    lines.append("## Steps")
+    for index, step in enumerate(steps, start=1):
+        lines.append(f"### Step {index}: {step.title}")
         lines.append("")
-        lines.append(f"## {heading.replace('_', ' ').title()}")
-        for item in getattr(plan, heading):
-            lines.append(f"- {item}")
-    lines.append("")
-    lines.append("# Steps")
-    for step in steps:
-        lines.extend([
-            "",
-            f"## {step.id} - {step.title}",
-            "**System Prompt**:",
-            f"```\n{step.system_prompt}\n```",
-            "**User Prompt**:",
-            f"```\n{step.user_prompt}\n```",
-            "**Expected Artifacts**:",
-        ])
-        lines.extend(f"- {artifact}" for artifact in step.expected_artifacts)
-        lines.append("**Acceptance Criteria**:")
-        lines.extend(f"- {crit}" for crit in step.acceptance_criteria)
+        lines.append("**System Prompt**")
+        lines.extend(step.system_prompt.splitlines())
+        lines.append("")
+        lines.append("**User Prompt**")
+        lines.extend(step.user_prompt.splitlines())
+        lines.append("")
+        if step.expected_artifacts:
+            lines.append("**Expected Artifacts**")
+            lines.extend(f"- {artifact}" for artifact in step.expected_artifacts)
+            lines.append("")
+        if step.acceptance_criteria:
+            lines.append("**Acceptance Criteria**")
+            lines.extend(f"- {criterion}" for criterion in step.acceptance_criteria)
+            lines.append("")
     if report:
-        lines.append("")
-        lines.append("# Reviewer Report")
-        lines.append(f"Overall score: {report.overall_score}")
-        lines.append("## Strengths")
-        lines.extend(f"- {item}" for item in report.strengths)
-        lines.append("## Concerns")
-        lines.extend(f"- {item}" for item in report.concerns)
-    return "
-".join(lines)
+        lines.append("## Reviewer Report")
+        lines.append(f"Overall score: {report.overall_score:.2f}")
+        if report.strengths:
+            lines.append("**Strengths**")
+            lines.extend(f"- {item}" for item in report.strengths)
+        if report.concerns:
+            lines.append("**Concerns**")
+            lines.extend(f"- {item}" for item in report.concerns)
+    return "\n".join(lines)
+
+

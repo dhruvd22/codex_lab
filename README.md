@@ -1,42 +1,62 @@
-# Koyeb FastAPI Demo
+# Project Planner on Koyeb
 
-## Overview
-- Minimal FastAPI application serving `{ "message": "Hello from Koyeb" }` on the root endpoint.
-- Docker-based workflow tuned for quick deployment to Koyeb.
-- Includes manifest, dependency, and ignore files to streamline CI/CD pipelines.
+A deployable Project Planner experience combining a FastAPI backend and a statically-exported Next.js UI. The default service exposes:
 
-## Project Layout
-```
+- `GET /healthz` for basic health checks.
+- `GET /` serving the Project Planner web UI.
+- `API` endpoints under `/api/projectplanner/...` for ingestion, planning, exporting, and run management.
+
+## Repository Layout
+```text
 .
-|- .dockerignore       # Excludes caches, compiled files, and virtualenvs from Docker context
-|- Dockerfile          # Builds the FastAPI app on python:3.11-slim and runs uvicorn on port 8000
-|- generate_dockerfile.py # Script to generate Dockerfile (can be run locally)
-|- koyeb.yaml          # Koyeb deployment manifest targeting the Dockerfile and exposing HTTP
-|- requirements.txt    # FastAPI + uvicorn runtime dependencies
-\- app/
-   \- main.py         # Root endpoint returning the greeting JSON payload
+|- app/main.py                # Boots the Project Planner API (and serves the UI when built)
+|- projectplanner/api         # FastAPI routers, middleware, and persistence layer
+|- projectplanner/ui          # Next.js UI source that talks to the API
+|- Dockerfile                 # Multi-stage build: compiles UI then serves via uvicorn
+|- koyeb.yaml                 # Declarative Koyeb service definition
+|- requirements.txt           # Python dependencies for API + static delivery
 ```
 
-## Local Run
-1. `python -m venv .venv && .venv\\Scripts\\activate`
-2. `pip install -r requirements.txt`
-3. `uvicorn app.main:app --host 0.0.0.0 --port 8000`
-4. Visit `http://localhost:8000/` and confirm the JSON response.
+## Local Development
+1. **Python environment**
+   ```powershell
+   python -m venv .venv
+   .venv\Scripts\Activate
+   pip install -r requirements.txt
+   ```
+2. **Front-end assets** (optional for local dev, required for production parity)
+   ```powershell
+   npm install --prefix projectplanner/ui
+   npm run build --prefix projectplanner/ui
+   ```
+   The build outputs to `projectplanner/ui/out`, which FastAPI automatically serves.
+3. **Run the service**
+   ```powershell
+   uvicorn app.main:app --host 0.0.0.0 --port 8000
+   ```
+4. Open `http://localhost:8000/` to use the planner. API routes remain available at `http://localhost:8000/api/projectplanner/*`.
 
-## Dockerfile Generation
-The Dockerfile is automatically generated via GitHub Actions, but you can also generate it locally:
-```bash
-python generate_dockerfile.py
+### Environment Variables
+- `DATABASE_URL` — optional Postgres connection string. Defaults to SQLite under `projectplanner/data/`.
+- `PROJECT_PLANNER_UI_DIST` — override the directory that contains the static UI build.
+- `OPENAI_API_KEY` — enables real embeddings; otherwise deterministic hashes are used.
+
+## Docker
+```powershell
+docker build -t projectplanner .
+docker run --rm -p 8000:8000 projectplanner
 ```
+The image installs Python dependencies, builds the Next.js UI, copies the static export, and launches uvicorn.
 
-## Docker Build & Test
-1. `docker build -t fastapi-koyeb .`
-2. `docker run --rm -p 8000:8000 fastapi-koyeb`
-3. Hit `http://localhost:8000/` to verify the container output.
+## Deploying to Koyeb
+1. Create the app if it does not exist yet:
+   ```bash
+   koyeb app create projectplanner
+   ```
+2. Deploy (or update) the service using the manifest:
+   ```bash
+   koyeb service deploy planner --app projectplanner --manifest ./koyeb.yaml
+   ```
+3. Optionally set secrets such as `OPENAI_API_KEY` or `DATABASE_URL` through the Koyeb dashboard or CLI.
 
-## Deploy to Koyeb
-1. `koyeb app create koyeb-fastapi`
-2. `koyeb service deploy fastapi-service --app koyeb-fastapi --dockerfile ./Dockerfile --ports 8000:http`
-3. `koyeb service url fastapi-service --app koyeb-fastapi`
-
-Use the final command to retrieve the live URL for the API.
+Once the service is live, navigating to the service URL renders the Project Planner UI by default, backed by the FastAPI endpoints.

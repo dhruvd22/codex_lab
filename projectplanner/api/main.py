@@ -1,14 +1,17 @@
-﻿"""FastAPI application factory for the project planner module."""
+"""FastAPI application factory for the project planner module."""
 from __future__ import annotations
 
+import os
 import time
 from collections import defaultdict, deque
+from pathlib import Path
 from typing import Deque, DefaultDict
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.responses import Response
 
 from projectplanner.api.routers import prompts
 from projectplanner.services.store import ProjectPlannerStore
@@ -28,7 +31,7 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         host = request.client.host if request.client else "anonymous"
         bucket = self._buckets[host]
-        now = time.monotonic()
+        now = time.monotonic()
         bucket.append(now)
         while bucket and now - bucket[0] > RATE_LIMIT_WINDOW_SECONDS:
             bucket.popleft()
@@ -59,7 +62,37 @@ def create_app() -> FastAPI:
     app.state.store = store
 
     app.include_router(prompts.router, prefix="/api/projectplanner", tags=["projectplanner"])
+
+    @app.get("/healthz", include_in_schema=False)
+    async def healthz() -> JSONResponse:
+        return JSONResponse({"status": "ok"})
+
+    _configure_frontend(app)
     return app
+
+
+def _configure_frontend(app: FastAPI) -> None:
+    """Serve the static UI build when available."""
+
+    candidates = []
+    override_path = os.getenv("PROJECT_PLANNER_UI_DIST")
+    if override_path:
+        candidates.append(Path(override_path))
+
+    ui_root = Path(__file__).resolve().parent / "../ui"
+    for subdir in ("out", "dist", "build"):
+        candidates.append((ui_root / subdir).resolve())
+
+    for path in candidates:
+        resolved = path.resolve()
+        index_file = resolved / "index.html"
+        if index_file.is_file():
+            app.mount("/", StaticFiles(directory=str(resolved), html=True), name="projectplanner-frontend")
+            return
+
+    @app.get("/", include_in_schema=False)
+    async def fallback_root() -> JSONResponse:
+        return JSONResponse({"status": "ok", "message": "Project Planner API ready"})
 
 
 app = create_app()

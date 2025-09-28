@@ -17,31 +17,27 @@ def _make_client(tmp_path):
 
 
 def _parse_final_plan(stream_text: str) -> dict:
-    blocks = [block.strip() for block in stream_text.split("
-
-") if block.strip()]
+    normalized = stream_text.replace('\\r\\n', '\\n')
+    blocks = [block.strip() for block in normalized.split("\n\n") if block.strip()]
     for block in blocks:
         event_type = ""
-        data_lines = []
+        data_lines: list[str] = []
         for line in block.splitlines():
             if line.startswith("event:"):
                 event_type = line.split(":", 1)[1].strip()
             elif line.startswith("data:"):
                 data_lines.append(line.split(":", 1)[1].strip())
         if event_type == "final_plan" and data_lines:
-            data_str = "
-".join(data_lines)
+            data_str = "\n".join(data_lines)
             return json.loads(data_str)
     raise AssertionError("final_plan event not found in stream")
-
 
 def test_api_plan_flow(tmp_path):
     client = _make_client(tmp_path)
 
     ingest_response = client.post(
         "/api/projectplanner/ingest",
-        json={"text": "Goals: improve ux
-Risks: timeline"},
+        json={"text": "Goals: improve ux\nRisks: timeline"},
     )
     assert ingest_response.status_code == 200
     run_id = ingest_response.json()["run_id"]

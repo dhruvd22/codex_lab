@@ -26,10 +26,7 @@ def _format_sse(event_type: str, payload: dict) -> str:
     """Render a server-sent event chunk."""
 
     data = json.dumps(payload)
-    return f"event: {event_type}
-data: {data}
-
-"
+    return f"event: {event_type}\n" f"data: {data}\n\n"
 
 
 @router.post("/ingest", response_model=IngestionResponse)
