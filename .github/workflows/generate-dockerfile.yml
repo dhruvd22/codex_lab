@@ -19,27 +19,36 @@ jobs:
 
       - name: Generate Dockerfile from template
         run: |
-          python <<"PY"
+          cat > generate_dockerfile.py << 'EOF'
+          #!/usr/bin/env python3
           from pathlib import Path
           from textwrap import dedent
 
-          dockerfile = dedent("""\
-          FROM python:3.11-slim
+          def generate_dockerfile():
+              dockerfile = dedent("""\
+              FROM python:3.11-slim
 
-          WORKDIR /app
+              WORKDIR /app
 
-          COPY requirements.txt ./
-          RUN pip install --no-cache-dir -r requirements.txt
+              COPY requirements.txt ./
+              RUN pip install --no-cache-dir -r requirements.txt
 
-          COPY . .
+              COPY . .
 
-          EXPOSE 8000
+              EXPOSE 8000
 
-          CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-          """)
+              CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+              """)
 
-          Path("Dockerfile").write_text(dockerfile, encoding="utf-8")
-          PY
+              Path("Dockerfile").write_text(dockerfile, encoding="utf-8")
+              print("Generated Dockerfile successfully")
+
+          if __name__ == "__main__":
+              generate_dockerfile()
+          EOF
+          
+          python generate_dockerfile.py
+          rm generate_dockerfile.py
 
       - name: Show Dockerfile content
         run: |
@@ -50,12 +59,21 @@ jobs:
       - name: Commit and push Dockerfile if changed
         run: |
           set -euo pipefail
+          
+          # Check if Dockerfile exists
+          if [ ! -f "Dockerfile" ]; then
+            echo "ERROR: Dockerfile was not generated!"
+            exit 1
+          fi
+          
+          # Check for changes
           change=$(git status --porcelain Dockerfile || true)
           if [ -z "$change" ]; then
             echo "Dockerfile is already up to date"
             exit 0
           fi
 
+          echo "Dockerfile has changes, committing..."
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Dockerfile
