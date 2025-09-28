@@ -41,16 +41,17 @@ jobs:
           Path("Dockerfile").write_text(dockerfile, encoding="utf-8")
           PY
 
+      - name: Show Dockerfile content
+        run: |
+          ls -al Dockerfile
+          echo "---"
+          cat Dockerfile
+
       - name: Commit and push Dockerfile if changed
         run: |
           set -euo pipefail
-          if git ls-files --error-unmatch Dockerfile >/dev/null 2>&1; then
-            tracked=true
-          else
-            tracked=false
-          fi
-
-          if [ "$tracked" = true ] && git diff --quiet Dockerfile; then
+          change=$(git status --porcelain Dockerfile || true)
+          if [ -z "$change" ]; then
             echo "Dockerfile is already up to date"
             exit 0
           fi
