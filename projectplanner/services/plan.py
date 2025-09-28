@@ -1,9 +1,9 @@
-﻿"""Planning workflow orchestration."""
+"""Planning workflow orchestration."""
 from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import List
+from typing import Any, Dict, Iterator, List, Tuple
 
 from fastapi import HTTPException
 
@@ -27,8 +27,22 @@ from projectplanner.models import (
 )
 from projectplanner.services.store import ProjectPlannerStore
 
+PlanningEvent = Tuple[str, Dict[str, Any]]
 
-async def run_planning_workflow(payload: PlanRequest, *, store: ProjectPlannerStore) -> PlanResponse:
+
+def _serialize_report(report: AgentReport) -> Dict[str, Any]:
+    """Convert the reviewer report into a JSON safe payload."""
+
+    data = report.dict()
+    data["generated_at"] = report.generated_at.isoformat()
+    return data
+
+
+def _planning_generator(
+    payload: PlanRequest, *, store: ProjectPlannerStore
+) -> Iterator[PlanningEvent]:
+    """Yield planning lifecycle events and return the final plan."""
+
     if not store.run_exists(payload.run_id):
         raise HTTPException(status_code=404, detail="Run not found. Ingest a document first.")
 
@@ -37,6 +51,11 @@ async def run_planning_workflow(payload: PlanRequest, *, store: ProjectPlannerSt
         raise HTTPException(status_code=400, detail="Run has no chunks to plan against.")
 
     text_chunks = [chunk.text for chunk in chunks]
+    yield (
+        "planner_started",
+        {"run_id": payload.run_id, "chunk_count": len(text_chunks)},
+    )
+
     planner_input = PlannerAgentInput(
         run_id=payload.run_id,
         chunks=text_chunks,
@@ -46,6 +65,7 @@ async def run_planning_workflow(payload: PlanRequest, *, store: ProjectPlannerSt
     planner = PlannerAgent()
     plan_output = planner.generate_plan(planner_input)
     plan = plan_output.plan
+    yield ("planner_completed", {"plan": plan.dict()})
 
     decomposer_input = DecomposerAgentInput(
         run_id=payload.run_id,
@@ -55,12 +75,20 @@ async def run_planning_workflow(payload: PlanRequest, *, store: ProjectPlannerSt
     decomposer = DecomposerAgent()
     steps_output = decomposer.decompose(decomposer_input)
     steps = steps_output.steps
+    yield ("decomposer_completed", {"steps": [step.dict() for step in steps]})
 
     reviewer_input = ReviewerAgentInput(run_id=payload.run_id, plan=plan, steps=steps)
     reviewer = ReviewerAgent()
     review_output = reviewer.review(reviewer_input)
     reviewed_steps = review_output.steps
     report = review_output.report
+    yield (
+        "reviewer_completed",
+        {
+            "report": _serialize_report(report),
+            "steps": [step.dict() for step in reviewed_steps],
+        },
+    )
 
     store.attach_plan_context(
         payload.run_id,
@@ -71,7 +99,38 @@ async def run_planning_workflow(payload: PlanRequest, *, store: ProjectPlannerSt
     store.upsert_steps(payload.run_id, reviewed_steps)
     store.upsert_report(payload.run_id, report)
 
+    final_payload: Dict[str, Any] = {
+        "run_id": payload.run_id,
+        "plan": plan.dict(),
+        "steps": [step.dict() for step in reviewed_steps],
+        "report": _serialize_report(report),
+    }
+    yield ("final_plan", final_payload)
     return PlanResponse(plan=plan, steps=reviewed_steps, report=report)
+
+
+async def run_planning_workflow(payload: PlanRequest, *, store: ProjectPlannerStore) -> PlanResponse:
+    """Execute the planning workflow and return the final response."""
+
+    generator = _planning_generator(payload, store=store)
+    final_response: PlanResponse | None = None
+    while True:
+        try:
+            next(generator)
+        except StopIteration as stop:
+            final_response = stop.value
+            break
+    if final_response is None:
+        raise RuntimeError("Planning did not produce a final response.")
+    return final_response
+
+
+def planning_event_stream(
+    payload: PlanRequest, *, store: ProjectPlannerStore
+) -> Iterator[PlanningEvent]:
+    """Expose the planning lifecycle as an iterator for streaming."""
+
+    return _planning_generator(payload, store=store)
 
 
 async def export_prompts(payload: ExportRequest, *, store: ProjectPlannerStore) -> ExportResponse:
@@ -105,7 +164,8 @@ async def export_prompts(payload: ExportRequest, *, store: ProjectPlannerStore) 
 
 
 def _to_yaml(plan: PromptPlan, steps: List[PromptStep], report: AgentReport | None) -> str:
-    lines: List[str] = ["plan:", f"  context: |\n    {plan.context}"]
+    lines: List[str] = ["plan:", f"  context: |
+    {plan.context}"]
     for field in ("goals", "assumptions", "non_goals", "risks", "milestones"):
         lines.append(f"  {field}:")
         for item in getattr(plan, field):
@@ -141,7 +201,8 @@ def _to_yaml(plan: PromptPlan, steps: List[PromptStep], report: AgentReport | No
         lines.append("  concerns:")
         for item in report.concerns:
             lines.append(f"    - {item}")
-    return "\n".join(lines)
+    return "
+".join(lines)
 
 
 def _to_jsonl(plan: PromptPlan, steps: List[PromptStep], report: AgentReport | None) -> str:
@@ -150,7 +211,8 @@ def _to_jsonl(plan: PromptPlan, steps: List[PromptStep], report: AgentReport | N
         bundle.append({"type": "step", "payload": step.dict()})
     if report:
         bundle.append({"type": "report", "payload": report.dict()})
-    return "\n".join(json.dumps(item) for item in bundle)
+    return "
+".join(json.dumps(item) for item in bundle)
 
 
 def _to_markdown(plan: PromptPlan, steps: List[PromptStep], report: AgentReport | None) -> str:
@@ -165,7 +227,7 @@ def _to_markdown(plan: PromptPlan, steps: List[PromptStep], report: AgentReport 
     for step in steps:
         lines.extend([
             "",
-            f"## {step.id} — {step.title}",
+            f"## {step.id} - {step.title}",
             "**System Prompt**:",
             f"```\n{step.system_prompt}\n```",
             "**User Prompt**:",
@@ -183,4 +245,5 @@ def _to_markdown(plan: PromptPlan, steps: List[PromptStep], report: AgentReport 
         lines.extend(f"- {item}" for item in report.strengths)
         lines.append("## Concerns")
         lines.extend(f"- {item}" for item in report.concerns)
-    return "\n".join(lines)
+    return "
+".join(lines)

@@ -1,28 +1,36 @@
-﻿description: Project planner golden tests
+﻿description: Projectplanner golden plan checks
 providers:
   - id: mock
     responses:
-      - completion: |
-          {"plan":{"context":"Scope for Project A","goals":["Deliver MVP"],"assumptions":["API keys ready"],"non_goals":["No legacy migration"],"risks":["Tight deadline"],"milestones":["Milestone 1"]}}
-      - completion: |
-          {"plan":{"context":"Scope for Project B","goals":["Ship feature"],"assumptions":["Team available"],"non_goals":["No infra changes"],"risks":["Integration uncertainty"],"milestones":["Milestone A","Milestone B"]}}
+      - completion: >-
+          {"plan":{"context":"Scope for Project A","goals":["Deliver MVP"],"assumptions":["API keys ready"],"non_goals":["No legacy migration"],"risks":["Tight deadline"],"milestones":["Milestone 1"]},"steps":[{"id":"step-1","title":"Draft architecture","system_prompt":"","user_prompt":"","expected_artifacts":["docs/architecture.md"],"tools":[],"acceptance_criteria":["Covers services"],"inputs":["plan.context"],"outputs":["architecture"],"token_budget":512,"cited_artifacts":[]}],"report":null}
+      - completion: >-
+          {"plan":{"context":"Scope for Project B","goals":["Ship feature"],"assumptions":["Team available"],"non_goals":["No infra changes"],"risks":["Integration uncertainty"],"milestones":["Milestone A","Milestone B"]},"steps":[{"id":"step-1","title":"Design UI","system_prompt":"","user_prompt":"","expected_artifacts":["docs/ui-spec.md"],"tools":["figma"],"acceptance_criteria":["Spec includes states"],"inputs":["plan.context"],"outputs":["ui-spec"],"token_budget":512,"cited_artifacts":[]},{"id":"step-2","title":"Implement API","system_prompt":"","user_prompt":"","expected_artifacts":["api/routes.ts"],"tools":[],"acceptance_criteria":["Tests included"],"inputs":["plan.goals"],"outputs":["api"],"token_budget":512,"cited_artifacts":[]}],"report":null}
 prompts:
   - label: plan-structure
     prompt: "{{input}}"
 tests:
-  - description: Plan contains core sections
+  - description: Golden run keeps all plan sections
     vars:
-      input: request plan
+      input: generate plan for project a
     assert:
       - type: javascript
         value: |
           const data = JSON.parse(output);
-          return data.plan.goals && data.plan.assumptions && data.plan.non_goals && data.plan.risks && data.plan.milestones;
-  - description: Milestones always present
+          const plan = data.plan || {};
+          return Array.isArray(plan.goals) && plan.goals.length > 0 &&
+                 Array.isArray(plan.assumptions) && plan.assumptions.length > 0 &&
+                 Array.isArray(plan.risks) && plan.risks.length > 0 &&
+                 Array.isArray(plan.milestones) && plan.milestones.length > 0 &&
+                 Array.isArray(data.steps) && data.steps.length > 0;
+  - description: Steps include required artifacts and acceptance criteria
     vars:
-      input: request plan
+      input: generate plan for project b
     assert:
       - type: javascript
         value: |
           const data = JSON.parse(output);
-          return Array.isArray(data.plan.milestones) && data.plan.milestones.length > 0;
+          if (!Array.isArray(data.steps) || data.steps.length === 0) {
+            return false;
+          }
+          return data.steps.every((step) => Array.isArray(step.expected_artifacts) && step.expected_artifacts.length > 0 && Array.isArray(step.acceptance_criteria) && step.acceptance_criteria.length > 0);

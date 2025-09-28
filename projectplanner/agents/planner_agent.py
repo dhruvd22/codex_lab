@@ -76,8 +76,9 @@ class PlannerAgent:
             "Milestone 1: Confirm requirements and domain assumptions",
             "Milestone 2: Draft architecture and integration approach",
             "Milestone 3: Implement features iteratively with validation",
-            "Milestone 4: Final review, polish, and delivery",
+            "Milestone 4: Validate outcomes against risks and acceptance criteria",
         ]
+        base.append("Milestone 5: Final review, polish, and delivery")
         if style == "creative":
-            base[-1] = "Milestone 4: Showcase results and gather feedback"
+            base[-1] = "Milestone 5: Showcase results and gather feedback"
         return base

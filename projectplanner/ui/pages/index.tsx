@@ -19,6 +19,13 @@ const exportFormats = [
   { label: "Markdown", value: "md" },
 ];
 
+const streamMessages: Record<string, string> = {
+  planner_started: "Planner analyzing document chunks...",
+  planner_completed: "Planner finished. Drafting execution steps...",
+  decomposer_completed: "Decomposer drafted steps. Running reviewer...",
+  reviewer_completed: "Reviewer scored the plan. Finalizing...",
+};
+
 type StyleOption = "strict" | "creative";
 
 export default function HomePage() {
@@ -93,7 +100,15 @@ export default function HomePage() {
     setLoading(true);
     setMessage(null);
     try {
-      const response: PlanResponse = await generatePlan({ run_id: runId, style });
+      const response: PlanResponse = await generatePlan(
+        { run_id: runId, style },
+        (event) => {
+          const next = streamMessages[event];
+          if (next) {
+            setMessage(next);
+          }
+        },
+      );
       setPlan(response.plan);
       setSteps(response.steps);
       setReport(response.report);

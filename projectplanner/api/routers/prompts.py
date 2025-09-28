@@ -1,5 +1,9 @@
-﻿"""API router exposing project planner endpoints."""
+"""API router exposing project planner endpoints."""
 from __future__ import annotations
+
+import json
+
+from typing import Iterator
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -9,13 +13,23 @@ from projectplanner.models import (
     IngestionRequest,
     IngestionResponse,
     PlanRequest,
-    PlanResponse,
     StepsResponse,
+    StepUpdateRequest,
 )
 from projectplanner.services import ingest as ingest_service
 from projectplanner.services import plan as plan_service
 
 router = APIRouter()
+
+
+def _format_sse(event_type: str, payload: dict) -> str:
+    """Render a server-sent event chunk."""
+
+    data = json.dumps(payload)
+    return f"event: {event_type}
+data: {data}
+
+"
 
 
 @router.post("/ingest", response_model=IngestionResponse)
@@ -26,13 +40,25 @@ async def ingest_endpoint(payload: IngestionRequest, request: Request) -> Ingest
     return await ingest_service.ingest_document(payload, store=store)
 
 
-@router.post("/plan", response_model=PlanResponse)
-async def plan_endpoint(payload: PlanRequest, request: Request) -> PlanResponse:
-    """Execute the multi-agent planning workflow."""
+@router.post("/plan")
+async def plan_endpoint(payload: PlanRequest, request: Request) -> StreamingResponse:
+    """Execute the multi-agent planning workflow as a server-sent event stream."""
 
     store = request.app.state.store
-    return await plan_service.run_planning_workflow(payload, store=store)
 
+    def event_stream() -> Iterator[str]:
+        generator = plan_service.planning_event_stream(payload, store=store)
+        while True:
+            try:
+                event_type, event_payload = next(generator)
+                yield _format_sse(event_type, event_payload)
+            except StopIteration:
+                break
+
+    response = StreamingResponse(event_stream(), media_type="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    return response
 
 
 @router.put("/steps/{run_id}", response_model=StepsResponse)
@@ -44,6 +70,8 @@ async def update_steps(run_id: str, payload: StepUpdateRequest, request: Request
         raise HTTPException(status_code=404, detail="Run not found.")
     store.upsert_steps(run_id, payload.steps)
     return StepsResponse(run_id=run_id, steps=payload.steps)
+
+
 @router.get("/steps/{run_id}", response_model=StepsResponse)
 async def get_steps(run_id: str, request: Request) -> StepsResponse:
     """Return the stored ordered prompt steps for a run."""

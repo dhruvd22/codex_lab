@@ -1,8 +1,9 @@
-﻿from fastapi.testclient import TestClient
+import json
+
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
 from projectplanner.api.main import create_app
-from projectplanner.models import PromptStep
 from projectplanner.services.store import ProjectPlannerStore
 
 
@@ -15,24 +16,47 @@ def _make_client(tmp_path):
     return TestClient(app)
 
 
+def _parse_final_plan(stream_text: str) -> dict:
+    blocks = [block.strip() for block in stream_text.split("
+
+") if block.strip()]
+    for block in blocks:
+        event_type = ""
+        data_lines = []
+        for line in block.splitlines():
+            if line.startswith("event:"):
+                event_type = line.split(":", 1)[1].strip()
+            elif line.startswith("data:"):
+                data_lines.append(line.split(":", 1)[1].strip())
+        if event_type == "final_plan" and data_lines:
+            data_str = "
+".join(data_lines)
+            return json.loads(data_str)
+    raise AssertionError("final_plan event not found in stream")
+
+
 def test_api_plan_flow(tmp_path):
     client = _make_client(tmp_path)
 
     ingest_response = client.post(
         "/api/projectplanner/ingest",
-        json={"text": "Goals: improve ux\nRisks: timeline"},
+        json={"text": "Goals: improve ux
+Risks: timeline"},
     )
     assert ingest_response.status_code == 200
     run_id = ingest_response.json()["run_id"]
 
-    plan_response = client.post(
+    with client.stream(
+        "POST",
         "/api/projectplanner/plan",
         json={"run_id": run_id, "style": "strict"},
-    )
-    assert plan_response.status_code == 200
-    data = plan_response.json()
-    assert data["plan"]["goals"]
-    steps = data["steps"]
+    ) as stream:
+        assert stream.status_code == 200
+        body = "".join(chunk for chunk in stream.iter_text())
+
+    final_payload = _parse_final_plan(body)
+    assert final_payload["plan"]["goals"]
+    steps = final_payload["steps"]
 
     steps[0]["title"] = "Updated Title"
     update_response = client.put(
