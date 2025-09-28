@@ -1,0 +1,46 @@
+name: Generate Dockerfile
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate Dockerfile from template
+        run: |
+          cat <<'EOF' > Dockerfile
+          FROM python:3.11-slim
+
+          WORKDIR /app
+
+          COPY requirements.txt ./
+          RUN pip install --no-cache-dir -r requirements.txt
+
+          COPY . .
+
+          EXPOSE 8000
+
+          CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+          EOF
+
+      - name: Commit and push Dockerfile if changed
+        run: |
+          if git diff --quiet Dockerfile; then
+            echo "Dockerfile is already up to date"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add Dockerfile
+            git commit -m "chore: regenerate Dockerfile"
+            git push
+          fi
