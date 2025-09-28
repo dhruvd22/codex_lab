@@ -76,7 +76,7 @@ class PromptPlan(BaseModel):
 class PromptStep(BaseModel):
     """Executable build prompt for an AI coding agent."""
 
-    id: str = Field(..., regex=r"^[a-z0-9\-]+$", description="Stable identifier for the step.")
+    id: str = Field(..., pattern=r"^[a-z0-9\-]+$", description="Stable identifier for the step.")
     title: str
     system_prompt: str
     user_prompt: str
