@@ -1,4 +1,4 @@
-# Project Planner on Koyeb
+# Project Planner
 
 A deployable Project Planner experience combining a FastAPI backend and a statically-exported Next.js UI. The default service exposes:
 
