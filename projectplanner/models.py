@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field, HttpUrl, root_validator
+from pydantic import BaseModel, Field, HttpUrl, model_validator
 
 
 class IngestionRequest(BaseModel):
@@ -22,11 +22,11 @@ class IngestionRequest(BaseModel):
         None, description="Helps the ingestion pipeline pick the proper parser."
     )
 
-    @root_validator
-    def ensure_payload_present(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+    @model_validator(mode="after")
+    def ensure_payload_present(cls, values: "IngestionRequest") -> "IngestionRequest":
         """Require at least one source of content to be provided."""
 
-        if not any(values.get(k) for k in ("url", "text", "file_id")):
+        if not (values.url or values.text or values.file_id):
             raise ValueError("Provide one of url, text, or file_id for ingestion.")
         return values
 
