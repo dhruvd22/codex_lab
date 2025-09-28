@@ -1,0 +1,28 @@
+﻿description: Project planner golden tests
+providers:
+  - id: mock
+    responses:
+      - completion: |
+          {"plan":{"context":"Scope for Project A","goals":["Deliver MVP"],"assumptions":["API keys ready"],"non_goals":["No legacy migration"],"risks":["Tight deadline"],"milestones":["Milestone 1"]}}
+      - completion: |
+          {"plan":{"context":"Scope for Project B","goals":["Ship feature"],"assumptions":["Team available"],"non_goals":["No infra changes"],"risks":["Integration uncertainty"],"milestones":["Milestone A","Milestone B"]}}
+prompts:
+  - label: plan-structure
+    prompt: "{{input}}"
+tests:
+  - description: Plan contains core sections
+    vars:
+      input: request plan
+    assert:
+      - type: javascript
+        value: |
+          const data = JSON.parse(output);
+          return data.plan.goals && data.plan.assumptions && data.plan.non_goals && data.plan.risks && data.plan.milestones;
+  - description: Milestones always present
+    vars:
+      input: request plan
+    assert:
+      - type: javascript
+        value: |
+          const data = JSON.parse(output);
+          return Array.isArray(data.plan.milestones) && data.plan.milestones.length > 0;
