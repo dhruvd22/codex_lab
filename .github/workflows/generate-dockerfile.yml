@@ -43,12 +43,20 @@ jobs:
 
       - name: Commit and push Dockerfile if changed
         run: |
-          if git diff --quiet Dockerfile; then
-            echo "Dockerfile is already up to date"
+          set -euo pipefail
+          if git ls-files --error-unmatch Dockerfile >/dev/null 2>&1; then
+            tracked=true
           else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add Dockerfile
-            git commit -m "chore: regenerate Dockerfile"
-            git push
+            tracked=false
           fi
+
+          if [ "$tracked" = true ] && git diff --quiet Dockerfile; then
+            echo "Dockerfile is already up to date"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Dockerfile
+          git commit -m "chore: regenerate Dockerfile"
+          git push
