@@ -5,6 +5,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      force_regenerate:
+        description: 'Force regenerate and commit Dockerfile even if no changes'
+        required: false
+        default: 'false'
+        type: boolean
 
 permissions:
   contents: write
@@ -62,20 +68,43 @@ jobs:
           
           # Check if Dockerfile exists
           if [ ! -f "Dockerfile" ]; then
-            echo "ERROR: Dockerfile was not generated!"
+            echo "❌ ERROR: Dockerfile was not generated!"
             exit 1
           fi
           
+          echo "✅ Dockerfile generated successfully"
+          
+          # Show file info
+          echo "📄 Dockerfile info:"
+          ls -la Dockerfile
+          echo "📝 Dockerfile size: $(wc -c < Dockerfile) bytes"
+          
           # Check for changes
           change=$(git status --porcelain Dockerfile || true)
-          if [ -z "$change" ]; then
-            echo "Dockerfile is already up to date"
+          force_regenerate="${{ github.event.inputs.force_regenerate }}"
+          
+          if [ -z "$change" ] && [ "$force_regenerate" != "true" ]; then
+            echo "✨ Dockerfile is already up to date - no changes needed"
+            echo "🎯 This means the generated Dockerfile is identical to the committed version"
+            echo "📋 Generated Dockerfile content matches the repository version"
+            echo "💡 Use 'force_regenerate: true' in workflow_dispatch to force commit anyway"
             exit 0
           fi
+          
+          if [ -z "$change" ] && [ "$force_regenerate" == "true" ]; then
+            echo "🔧 Force regenerate enabled - will commit even without changes"
+            # Touch the file to create a change
+            touch Dockerfile
+          fi
 
-          echo "Dockerfile has changes, committing..."
+          echo "🔄 Dockerfile has changes, committing..."
+          echo "📊 Changes detected:"
+          git diff --stat Dockerfile || true
+          
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Dockerfile
           git commit -m "chore: regenerate Dockerfile"
           git push
+          
+          echo "✅ Dockerfile successfully committed and pushed"

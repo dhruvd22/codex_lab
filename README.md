@@ -10,6 +10,7 @@
 .
 |- .dockerignore       # Excludes caches, compiled files, and virtualenvs from Docker context
 |- Dockerfile          # Builds the FastAPI app on python:3.11-slim and runs uvicorn on port 8000
+|- generate_dockerfile.py # Script to generate Dockerfile (can be run locally)
 |- koyeb.yaml          # Koyeb deployment manifest targeting the Dockerfile and exposing HTTP
 |- requirements.txt    # FastAPI + uvicorn runtime dependencies
 \- app/
@@ -21,6 +22,12 @@
 2. `pip install -r requirements.txt`
 3. `uvicorn app.main:app --host 0.0.0.0 --port 8000`
 4. Visit `http://localhost:8000/` and confirm the JSON response.
+
+## Dockerfile Generation
+The Dockerfile is automatically generated via GitHub Actions, but you can also generate it locally:
+```bash
+python generate_dockerfile.py
+```
 
 ## Docker Build & Test
 1. `docker build -t fastapi-koyeb .`
