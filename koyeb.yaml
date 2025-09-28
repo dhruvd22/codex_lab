@@ -1,0 +1,12 @@
+name: koyeb-fastapi
+services:
+  - name: fastapi-service
+    type: web
+    source:
+      type: docker
+      docker:
+        file: Dockerfile
+    ports:
+      - port: 8000
+        http:
+          public: true
