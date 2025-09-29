@@ -86,7 +86,7 @@ export type ExportRequest = {
 
 export type PlanEventHandler = (event: string, data: unknown) => void;
 
-const envApiBase = (process.env.NEXT_PUBLIC_API_URL ?? "").replace(/\/$/, "");
+const envApiBase = ((globalThis as any)?.process?.env?.NEXT_PUBLIC_API_URL ?? "").replace(/\/$/, "");
 
 function resolveApiUrl(path: string): string {
   if (!envApiBase) {
@@ -152,20 +152,11 @@ export async function generatePlan(
   let finalPayload: PlanResponse | null = null;
 
   const processBuffer = (flush: boolean) => {
-    let working = buffer.replace(/
-
-/g, "
-");
-    if (flush && working && !working.endsWith("
-
-")) {
-      working = `${working}
-
-`;
+    let working = buffer.replace(/\r\n/g, "\n");
+    if (flush && working && !working.endsWith("\n\n")) {
+      working = `${working}\n\n`;
     }
-    let boundary = working.indexOf("
-
-");
+    let boundary = working.indexOf("\n\n");
     while (boundary !== -1) {
       const rawEvent = working.slice(0, boundary);
       working = working.slice(boundary + 2);
@@ -187,9 +178,7 @@ export async function generatePlan(
           };
         }
       }
-      boundary = working.indexOf("
-
-");
+      boundary = working.indexOf("\n\n");
     }
     buffer = working;
   };
@@ -212,8 +201,7 @@ export async function generatePlan(
 }
 
 function parseServerSentEvent(payload: string): { eventType: string; data: unknown } {
-  const lines = payload.split("
-");
+  const lines = payload.split("\n");
   let eventType = "message";
   const dataLines: string[] = [];
   for (const line of lines) {
@@ -224,8 +212,7 @@ function parseServerSentEvent(payload: string): { eventType: string; data: unkno
       dataLines.push(trimmed.slice(5).trim());
     }
   }
-  const dataString = dataLines.join("
-");
+  const dataString = dataLines.join("\n");
   if (!dataString) {
     return { eventType, data: null };
   }
