@@ -152,7 +152,8 @@ export async function generatePlan(
   let finalPayload: PlanResponse | null = null;
 
   const processBuffer = (flush: boolean) => {
-    let working = buffer.replace(/
+    let working = buffer.replace(/
+
 /g, "
 ");
     if (flush && working && !working.endsWith("
@@ -193,13 +194,14 @@ export async function generatePlan(
     buffer = working;
   };
 
-  while (true) {
+  let streamComplete = false;
+  while (!streamComplete) {
     const { value, done } = await reader.read();
-    if (done) {
-      break;
+    if (value) {
+      buffer += decoder.decode(value, { stream: !done });
+      processBuffer(false);
     }
-    buffer += decoder.decode(value, { stream: true });
-    processBuffer(false);
+    streamComplete = !!done;
   }
   buffer += decoder.decode(new Uint8Array(), { stream: false });
   processBuffer(true);
