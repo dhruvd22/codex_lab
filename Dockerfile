@@ -1,4 +1,4 @@
-syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1
 FROM node:20-bullseye-slim AS ui-build
 WORKDIR /ui
 COPY projectplanner/ui/package*.json ./
