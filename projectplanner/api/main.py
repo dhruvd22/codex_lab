@@ -1,15 +1,18 @@
-"""FastAPI application factory for the project planner module."""
+﻿"""FastAPI application factory for the project planner module."""
 from __future__ import annotations
 
 import os
 import time
 from collections import defaultdict, deque
+from dataclasses import dataclass
+from html import escape
 from pathlib import Path
-from typing import Deque, DefaultDict
+from textwrap import dedent
+from typing import Deque, DefaultDict, Sequence
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
@@ -19,6 +22,19 @@ from projectplanner.services.store import ProjectPlannerStore
 MAX_BODY_SIZE_BYTES = 2 * 1024 * 1024  # 2 MiB upper bound for uploads
 RATE_LIMIT_REQUESTS = 60
 RATE_LIMIT_WINDOW_SECONDS = 60
+
+
+@dataclass(frozen=True)
+class FrontendModule:
+    """Metadata describing a discovered frontend bundle."""
+
+    slug: str
+    title: str
+    dist_path: Path
+
+    @property
+    def launch_href(self) -> str:
+        return f"/{self.slug}/"
 
 
 class RateLimiterMiddleware(BaseHTTPMiddleware):
@@ -31,7 +47,8 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         host = request.client.host if request.client else "anonymous"
         bucket = self._buckets[host]
-        now = time.monotonic()
+        now = time.monotonic()
+
         bucket.append(now)
         while bucket and now - bucket[0] > RATE_LIMIT_WINDOW_SECONDS:
             bucket.popleft()
@@ -72,27 +89,185 @@ def create_app() -> FastAPI:
 
 
 def _configure_frontend(app: FastAPI) -> None:
-    """Serve the static UI build when available."""
+    """Serve the static UI build when available and expose a landing page."""
 
-    candidates = []
-    override_path = os.getenv("PROJECT_PLANNER_UI_DIST")
-    if override_path:
-        candidates.append(Path(override_path))
+    modules = _discover_frontend_modules()
+    app.state.frontend_modules = modules
 
-    ui_root = Path(__file__).resolve().parent / "../ui"
-    for subdir in ("out", "dist", "build"):
-        candidates.append((ui_root / subdir).resolve())
-
-    for path in candidates:
-        resolved = path.resolve()
-        index_file = resolved / "index.html"
-        if index_file.is_file():
-            app.mount("/", StaticFiles(directory=str(resolved), html=True), name="projectplanner-frontend")
-            return
+    for module in modules:
+        app.mount(f"/{module.slug}", StaticFiles(directory=str(module.dist_path), html=True), name=f"{module.slug}-frontend")
 
     @app.get("/", include_in_schema=False)
-    async def fallback_root() -> JSONResponse:
-        return JSONResponse({"status": "ok", "message": "Project Planner API ready"})
+    async def landing_page() -> HTMLResponse:
+        discovered: Sequence[FrontendModule] = getattr(app.state, "frontend_modules", modules)
+        return HTMLResponse(content=_render_landing_page(discovered), media_type="text/html")
+
+
+def _discover_frontend_modules() -> list[FrontendModule]:
+    """Locate all built frontend bundles within the repository."""
+
+    override_path = os.getenv("PROJECT_PLANNER_UI_DIST")
+    if override_path:
+        dist = Path(override_path).expanduser().resolve()
+        if (dist / "index.html").is_file():
+            return [FrontendModule(slug="projectplanner", title="Project Planner", dist_path=dist)]
+        return []
+
+    modules: list[FrontendModule] = []
+    repo_root = Path(__file__).resolve().parents[2]
+    for candidate in sorted(repo_root.iterdir(), key=lambda path: path.name.lower()):
+        if not candidate.is_dir():
+            continue
+        dist = (candidate / "ui" / "out").resolve()
+        if (dist / "index.html").is_file():
+            slug = candidate.name.replace("_", "-").lower()
+            title = _humanize_module_name(candidate.name)
+            modules.append(FrontendModule(slug=slug, title=title, dist_path=dist))
+    return modules
+
+
+def _humanize_module_name(name: str) -> str:
+    """Convert a directory or package name into a display label."""
+
+    words = name.replace("-", " ").replace("_", " ").split()
+    return " ".join(word.capitalize() for word in words) if words else name
+
+
+def _render_landing_page(modules: Sequence[FrontendModule]) -> str:
+    """Render the HTML for the landing page with module launch buttons."""
+
+    module_cards = []
+    for module in modules:
+        module_cards.append(
+            """
+            <a class="module-card" href="{href}">
+              <span class="module-name">{title}</span>
+              <span class="module-action">Launch</span>
+            </a>
+            """.format(href=module.launch_href, title=escape(module.title))
+        )
+
+    if module_cards:
+        modules_markup = "\n".join(card.strip() for card in module_cards)
+        status_text = "Online"
+    else:
+        modules_markup = (
+            '<p class="empty">No UI modules were detected. Build a module UI '
+            'by running <code>npm run build --prefix &lt;module&gt;/ui</code> to expose it here.</p>'
+        )
+        status_text = "Waiting for UI builds"
+
+    return dedent(
+        f"""
+        <!DOCTYPE html>
+        <html lang="en">
+          <head>
+            <meta charset="utf-8" />
+            <title>Project Planner Services</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <style>
+              :root {{
+                color-scheme: dark;
+                font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                background-color: #0f172a;
+                color: #e2e8f0;
+              }}
+              * {{
+                box-sizing: border-box;
+              }}
+              body {{
+                margin: 0;
+                min-height: 100vh;
+                display: flex;
+                flex-direction: column;
+              }}
+              main {{
+                width: min(960px, 92vw);
+                margin: auto;
+                padding: 3rem 0 4rem;
+              }}
+              h1 {{
+                font-size: clamp(2rem, 3vw + 1rem, 3rem);
+                margin-bottom: 0.75rem;
+              }}
+              p.lead {{
+                margin-top: 0;
+                margin-bottom: 2rem;
+                color: #94a3b8;
+              }}
+              .modules {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                gap: 1.5rem;
+              }}
+              .module-card {{
+                display: flex;
+                flex-direction: column;
+                justify-content: space-between;
+                padding: 1.5rem;
+                border-radius: 1rem;
+                text-decoration: none;
+                background: linear-gradient(145deg, rgba(30,41,59,0.9), rgba(15,23,42,0.9));
+                border: 1px solid rgba(148, 163, 184, 0.15);
+                box-shadow: 0 12px 28px rgba(15, 23, 42, 0.35);
+                color: inherit;
+                transition: transform 120ms ease, border-color 120ms ease;
+              }}
+              .module-card:hover {{
+                transform: translateY(-4px);
+                border-color: rgba(129, 140, 248, 0.6);
+              }}
+              .module-name {{
+                font-size: 1.2rem;
+                font-weight: 600;
+                margin-bottom: 0.75rem;
+              }}
+              .module-action {{
+                font-size: 0.9rem;
+                font-weight: 500;
+                color: #a855f7;
+              }}
+              .empty {{
+                padding: 1.5rem;
+                border-radius: 1rem;
+                background: rgba(30,41,59,0.6);
+                border: 1px dashed rgba(148, 163, 184, 0.4);
+              }}
+              footer {{
+                margin-top: 4rem;
+                font-size: 0.85rem;
+                color: #64748b;
+                display: flex;
+                gap: 1rem;
+                flex-wrap: wrap;
+              }}
+              code {{
+                font-family: "Fira Code", "Menlo", monospace;
+              }}
+              a {{
+                color: #38bdf8;
+              }}
+              a:hover {{
+                color: #7dd3fc;
+              }}
+            </style>
+          </head>
+          <body>
+            <main>
+              <h1>Project Planner Services</h1>
+              <p class="lead">Launch an available UI module or explore the API via <a href="/docs">Swagger</a>.</p>
+              <div class="modules">
+                {modules_markup}
+              </div>
+              <footer>
+                <span>Status: {status_text}</span>
+                <span>API root: <code>/api/projectplanner</code></span>
+              </footer>
+            </main>
+          </body>
+        </html>
+        """
+    )
 
 
 app = create_app()
