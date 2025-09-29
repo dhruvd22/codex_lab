@@ -44,7 +44,7 @@ class ChunkRecord(Base):
     idx = Column(Integer, nullable=False)
     text = Column(Text, nullable=False)
     embedding = Column(Text, nullable=True)
-    metadata = Column(JSON, nullable=True)
+    metadata_json = Column("metadata", JSON, nullable=True)
 
     run = relationship("RunRecord", back_populates="chunks")
 
@@ -142,7 +142,7 @@ class ProjectPlannerStore:
                         idx=chunk.idx,
                         text=chunk.text,
                         embedding=json.dumps(chunk.embedding) if chunk.embedding else None,
-                        metadata=chunk.metadata,
+                        metadata_json=chunk.metadata,
                     )
                 )
 
@@ -159,7 +159,7 @@ class ProjectPlannerStore:
                 idx=r.idx,
                 text=r.text,
                 embedding=json.loads(r.embedding) if r.embedding else None,
-                metadata=r.metadata,
+                metadata=r.metadata_json,
             )
             for r in records
         ]
