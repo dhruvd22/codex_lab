@@ -205,10 +205,11 @@ export async function generatePlan(
   }
   buffer += decoder.decode(new Uint8Array(), { stream: false });
   processBuffer(true);
-  if (!finalPayload) {
+  const result = finalPayload;
+  if (!result) {
     throw new Error("Planning stream ended without a final plan event.");
   }
-  return finalPayload!;
+  return result;
 }
 
 function parseServerSentEvent(payload: string): { eventType: string; data: unknown } {
