@@ -208,7 +208,7 @@ export async function generatePlan(
   if (finalPayload) {
     return finalPayload;
   }
-  throw new Error("Planning stream ended without a final plan event.");
+  return Promise.reject(new Error("Planning stream ended without a final plan event."));
 }
 
 function parseServerSentEvent(payload: string): { eventType: string; data: unknown } {
