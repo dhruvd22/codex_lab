@@ -94,8 +94,22 @@ def _configure_frontend(app: FastAPI) -> None:
     modules = _discover_frontend_modules()
     app.state.frontend_modules = modules
 
+    global_next_static_mounted = False
+
     for module in modules:
-        app.mount(f"/{module.slug}", StaticFiles(directory=str(module.dist_path), html=True), name=f"{module.slug}-frontend")
+        frontend_app = StaticFiles(directory=str(module.dist_path), html=True)
+        app.mount(f"/{module.slug}", frontend_app, name=f"{module.slug}-frontend")
+
+        next_static_dir = module.dist_path / "_next"
+        if next_static_dir.is_dir():
+            app.mount(
+                f"/{module.slug}/_next",
+                StaticFiles(directory=str(next_static_dir)),
+                name=f"{module.slug}-frontend-assets",
+            )
+            if not global_next_static_mounted:
+                app.mount("/_next", StaticFiles(directory=str(next_static_dir)), name="frontend-assets")
+                global_next_static_mounted = True
 
     @app.get("/", include_in_schema=False)
     async def landing_page() -> HTMLResponse:
@@ -119,10 +133,16 @@ def _discover_frontend_modules() -> list[FrontendModule]:
         if not candidate.is_dir():
             continue
         dist = (candidate / "ui" / "out").resolve()
+        slug = candidate.name.replace("_", "-").lower()
+        title = _humanize_module_name(candidate.name)
+
         if (dist / "index.html").is_file():
-            slug = candidate.name.replace("_", "-").lower()
-            title = _humanize_module_name(candidate.name)
             modules.append(FrontendModule(slug=slug, title=title, dist_path=dist))
+            continue
+
+        nested_dist = dist / slug
+        if (nested_dist / "index.html").is_file():
+            modules.append(FrontendModule(slug=slug, title=title, dist_path=nested_dist))
     return modules
 
 
