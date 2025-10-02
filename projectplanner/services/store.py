@@ -166,7 +166,7 @@ class ProjectPlannerStore:
 
     def upsert_plan(self, run_id: str, plan: PromptPlan) -> None:
         with self.session() as session:
-            session.merge(PlanRecord(run_id=run_id, plan_json=plan.dict()))
+            session.merge(PlanRecord(run_id=run_id, plan_json=plan.model_dump(mode="json")))
 
     def upsert_steps(self, run_id: str, steps: List[PromptStep]) -> None:
         with self.session() as session:
@@ -176,13 +176,13 @@ class ProjectPlannerStore:
                     StepRecord(
                         run_id=run_id,
                         step_index=idx,
-                        step_json=step.dict(),
+                        step_json=step.model_dump(mode="json"),
                     )
                 )
 
     def upsert_report(self, run_id: str, report: AgentReport) -> None:
         with self.session() as session:
-            session.merge(ReportRecord(run_id=run_id, report_json=report.dict()))
+            session.merge(ReportRecord(run_id=run_id, report_json=report.model_dump(mode="json")))
 
     def attach_plan_context(self, run_id: str, *, target_stack: dict, style: str) -> None:
         with self.session() as session:
