@@ -24,6 +24,16 @@ CHUNK_CHAR_LIMIT = 1200
 CHUNK_OVERLAP = 200
 
 
+_EXTRA_WHITESPACE_TRANSLATION = {
+    ord('\u200b'): ' ',  # zero-width space
+    ord('\u200c'): ' ',  # zero-width non-joiner
+    ord('\u200d'): ' ',  # zero-width joiner
+    ord('\u2060'): ' ',  # word joiner
+    ord('\ufeff'): ' ',  # byte-order mark
+    0: ' ',                # NULL bytes from malformed PDFs
+}
+
+
 @dataclass
 class IngestionResult:
     run_id: str
@@ -128,7 +138,11 @@ def _parse_by_format(data: bytes, format_hint: str) -> str:
 
 
 def _normalize_text(text: str) -> str:
-    collapsed = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return ""
+
+    sanitized = text.translate(_EXTRA_WHITESPACE_TRANSLATION)
+    collapsed = re.sub(r"\s+", " ", sanitized).strip()
     return collapsed
 
 
@@ -164,7 +178,7 @@ def _dedupe_chunks(chunks: Sequence[str]) -> List[str]:
 def _count_words(text: str) -> int:
     if not text:
         return 0
-    return len([w for w in text.split(" ") if w])
+    return len(text.split())
 
 
 async def _embed_chunks(chunks: Sequence[str]) -> List[Optional[List[float]]]:
