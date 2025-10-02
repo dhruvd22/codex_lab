@@ -69,7 +69,8 @@ async def ingest_document(payload: IngestionRequest, *, store: ProjectPlannerSto
 
 async def _load_text(payload: IngestionRequest) -> Tuple[str, str]:
     if payload.text:
-        return payload.text, "inline"
+        decoded = _maybe_decode_text(payload.text, payload.format_hint)
+        return decoded, "inline"
     if payload.file_id:
         return _load_from_file(payload.file_id, payload.format_hint), "upload"
     if payload.url:
