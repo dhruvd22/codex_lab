@@ -1,12 +1,32 @@
-﻿"""Planner agent heuristics."""
+"""Planner agent orchestrating plan synthesis with GPT-5 support."""
 from __future__ import annotations
 
 import itertools
+import json
+import logging
+import os
 import re
-from typing import List
+from typing import List, Sequence
 
 from projectplanner.agents.schemas import PlannerAgentInput, PlannerAgentOutput
 from projectplanner.models import PromptPlan
+
+try:  # pragma: no cover - optional dependency guard
+    from openai import OpenAI
+except Exception:  # pragma: no cover
+    OpenAI = None  # type: ignore[assignment]
+
+LOGGER = logging.getLogger(__name__)
+
+DEFAULT_PLANNER_MODEL = os.getenv("PROJECTPLANNER_PLANNER_MODEL", "gpt-5.0")
+MAX_CONTEXT_CHARS = 18000
+
+PLANNER_SYSTEM_PROMPT = (
+    "You are Agent 1, the project planning specialist in an AI orchestrated workflow. "
+    "Using the coordinator's milestone objectives and the original research excerpts, produce a structured plan. "
+    "Respond strictly with JSON containing the keys: context (string), goals (list[str]), assumptions (list[str]), "
+    "non_goals (list[str]), and risks (list[str]). Do not include additional keys or prose."
+)
 
 SECTION_PATTERNS = {
     "goals": [r"^goal[s]?:", r"^objective[s]?:"],
@@ -20,18 +40,139 @@ SECTION_PATTERNS = {
 class PlannerAgent:
     """Extracts a structured plan from normalized research chunks."""
 
-    def generate_plan(self, payload: PlannerAgentInput) -> PlannerAgentOutput:
-        text = " \n".join(payload.chunks)
+    def __init__(self) -> None:
+        self._model = os.getenv("PROJECTPLANNER_PLANNER_MODEL", DEFAULT_PLANNER_MODEL)
+        self._client = None
+        api_key = os.getenv("OPENAI_API_KEY")
+        if api_key and OpenAI is not None:
+            try:
+                self._client = OpenAI(api_key=api_key)
+            except Exception:  # pragma: no cover - initialization failure fallback
+                LOGGER.warning("Failed to initialize OpenAI client for PlannerAgent; heuristics will be used.", exc_info=True)
+                self._client = None
 
-        plan = PromptPlan(
+    def generate_plan(self, payload: PlannerAgentInput) -> PlannerAgentOutput:
+        """Generate a PromptPlan using GPT-5 with deterministic fallback."""
+
+        heuristic_plan = self._generate_with_heuristics(payload)
+        if not self._client:
+            return PlannerAgentOutput(plan=heuristic_plan)
+
+        try:
+            plan = self._generate_with_gpt(payload, heuristic_plan)
+            return PlannerAgentOutput(plan=plan)
+        except Exception:  # pragma: no cover - fall back to heuristic result
+            LOGGER.warning("Planner GPT synthesis failed; returning heuristic plan.", exc_info=True)
+            return PlannerAgentOutput(plan=heuristic_plan)
+
+    def _generate_with_gpt(self, payload: PlannerAgentInput, fallback: PromptPlan) -> PromptPlan:
+        context = self._compress_chunks(payload.chunks)
+        objectives_json = json.dumps(
+            [
+                {
+                    "id": obj.id,
+                    "order": obj.order,
+                    "title": obj.title,
+                    "objective": obj.objective,
+                    "success_criteria": obj.success_criteria,
+                    "dependencies": obj.dependencies,
+                }
+                for obj in sorted(payload.objectives, key=lambda item: item.order)
+            ],
+            indent=2,
+        )
+        user_prompt = (
+            f"Run ID: {payload.run_id}\n"
+            f"Target stack: backend={payload.target_stack.backend}, frontend={payload.target_stack.frontend}, database={payload.target_stack.db}\n"
+            f"Planning style: {payload.style}\n"
+            "Ordered coordinator objectives:\n"
+            f"{objectives_json if payload.objectives else '[]'}\n"
+            "Document excerpts (normalized and truncated):\n"
+            '"""\n'
+            f"{context}\n"
+            '"""\n'
+            "Return JSON with fields context, goals, assumptions, non_goals, risks."
+        )
+
+        response = self._client.chat.completions.create(  # type: ignore[attr-defined]
+            model=self._model,
+            messages=[
+                {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.2,
+            max_tokens=900,
+        )
+        if not response.choices:
+            raise ValueError("Planner model returned no choices.")
+        message = response.choices[0].message
+        content = getattr(message, "content", None)
+        if not content:
+            raise ValueError("Planner model returned empty content.")
+
+        data = self._parse_plan_json(content)
+        milestones = self._milestone_titles(payload) or fallback.milestones
+        return PromptPlan(
+            context=data.get("context") or fallback.context,
+            goals=data.get("goals") or fallback.goals,
+            assumptions=data.get("assumptions") or fallback.assumptions,
+            non_goals=data.get("non_goals") or fallback.non_goals,
+            risks=data.get("risks") or fallback.risks,
+            milestones=milestones,
+        )
+
+    def _generate_with_heuristics(self, payload: PlannerAgentInput) -> PromptPlan:
+        text = " \n".join(payload.chunks)
+        milestones = self._milestone_titles(payload)
+        if not milestones:
+            milestones = self._extract_items(text, "milestones", fallback=self._default_milestones(payload.style))
+
+        return PromptPlan(
             context=self._build_context(text, payload.target_stack),
             goals=self._extract_items(text, "goals", fallback=["Deliver a working prototype aligned with the research brief."]),
             assumptions=self._extract_items(text, "assumptions", fallback=["Stakeholders provide timely reviews."]),
             non_goals=self._extract_items(text, "non_goals", fallback=["Do not re-architect unrelated systems."]),
             risks=self._extract_items(text, "risks", fallback=["Timeline pressure may limit exploration."]),
-            milestones=self._extract_items(text, "milestones", fallback=self._default_milestones(payload.style)),
+            milestones=milestones,
         )
-        return PlannerAgentOutput(plan=plan)
+
+    def _parse_plan_json(self, raw: str) -> dict:
+        cleaned = raw.strip()
+        fenced = re.match(r"```(?:json)?\s*(.*)```", cleaned, re.DOTALL)
+        if fenced:
+            cleaned = fenced.group(1).strip()
+        data = json.loads(cleaned)
+        if not isinstance(data, dict):
+            raise ValueError("Planner model response must be a JSON object.")
+
+        return {
+            "context": self._clean_text(data.get("context")),
+            "goals": self._safe_list(data.get("goals")),
+            "assumptions": self._safe_list(data.get("assumptions")),
+            "non_goals": self._safe_list(data.get("non_goals")),
+            "risks": self._safe_list(data.get("risks")),
+        }
+
+    def _clean_text(self, value) -> str:
+        if not value:
+            return ""
+        text = str(value).strip()
+        return re.sub(r"\s+", " ", text)
+
+    def _safe_list(self, value) -> List[str]:
+        if isinstance(value, list):
+            items = [self._clean_text(item) for item in value]
+        elif isinstance(value, str):
+            items = [self._clean_text(value)]
+        else:
+            items = []
+        return [item for item in items if item]
+
+    def _milestone_titles(self, payload: PlannerAgentInput) -> List[str]:
+        if payload.objectives:
+            ordered = sorted(payload.objectives, key=lambda item: item.order)
+            return [obj.title for obj in ordered]
+        return []
 
     def _build_context(self, text: str, stack) -> str:
         sentences = self._top_sentences(text, 2)
@@ -47,7 +188,7 @@ class PlannerAgent:
             lower = normalized.lower()
             for pattern in patterns:
                 if re.search(pattern, lower):
-                    cleaned = re.sub(r"^[^:]*:", "", normalized).strip(" -•\t")
+                    cleaned = re.sub(r"^[^:]*:", "", normalized).strip(" -\u0007\t")
                     if cleaned:
                         matches.append(cleaned)
                     break
@@ -62,7 +203,7 @@ class PlannerAgent:
 
     def _top_phrases(self, text: str, *, keywords: List[str], limit: int) -> List[str]:
         phrases: List[str] = []
-        tokens = [line.strip(" -•\t") for line in text.split("\n") if line.strip()]
+        tokens = [line.strip(" -\u0007\t") for line in text.split("\n") if line.strip()]
         keyword_pattern = re.compile("|".join(keywords), re.IGNORECASE) if keywords else None
         for token in tokens:
             if keyword_pattern and keyword_pattern.search(token):
@@ -82,3 +223,13 @@ class PlannerAgent:
         if style == "creative":
             base[-1] = "Milestone 5: Showcase results and gather feedback"
         return base
+
+    def _compress_chunks(self, chunks: Sequence[str], limit: int = MAX_CONTEXT_CHARS) -> str:
+        joined = "\n\n".join(chunks)
+        if len(joined) <= limit:
+            return joined
+        truncated = joined[:limit]
+        cutoff = truncated.rfind("\n")
+        if cutoff > limit * 0.6:
+            return truncated[:cutoff]
+        return truncated

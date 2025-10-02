@@ -3,6 +3,7 @@ import { ChangeEvent, useCallback, useMemo, useState } from "react";
 import {
   AgentReport,
   DocumentStats,
+  MilestoneObjective,
   PlanResponse,
   PromptPlan,
   PromptStep,
@@ -20,6 +21,8 @@ const exportFormats = [
 ];
 
 const streamMessages: Record<string, string> = {
+  coordinator_started: "Coordinator synthesizing milestone objectives...",
+  coordinator_completed: "Coordinator finalized objectives. Launching planner...",
   planner_started: "Planner analyzing document chunks...",
   planner_completed: "Planner finished. Drafting execution steps...",
   decomposer_completed: "Decomposer drafted steps. Running reviewer...",
@@ -35,6 +38,7 @@ export default function HomePage() {
   const [runId, setRunId] = useState<string | null>(null);
   const [stats, setStats] = useState<DocumentStats | null>(null);
   const [plan, setPlan] = useState<PromptPlan | null>(null);
+  const [objectives, setObjectives] = useState<MilestoneObjective[]>([]);
   const [steps, setSteps] = useState<PromptStep[]>([]);
   const [report, setReport] = useState<AgentReport | null>(null);
   const [style, setStyle] = useState<StyleOption>("strict");
@@ -83,6 +87,7 @@ export default function HomePage() {
       setRunId(response.run_id);
       setStats(response.stats);
       setPlan(null);
+      setObjectives([]);
       setSteps([]);
       setReport(null);
       setMessage(`Ingestion complete. Words: ${response.stats.word_count}, chunks: ${response.stats.chunk_count}`);
@@ -110,6 +115,7 @@ export default function HomePage() {
         },
       );
       setPlan(response.plan);
+      setObjectives(response.objectives ?? []);
       setSteps(response.steps);
       setReport(response.report);
       setMessage("Plan generated successfully.");
@@ -163,9 +169,31 @@ export default function HomePage() {
         <Section heading="Non-goals" items={plan.non_goals} />
         <Section heading="Risks" items={plan.risks} />
         <Section heading="Milestones" items={plan.milestones} />
+        {objectives.length > 0 && (
+          <section>
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Milestone Objectives</h3>
+            <ul className="mt-2 space-y-2 text-sm text-slate-200">
+              {objectives.map((item) => (
+                <li key={item.id} className="rounded bg-slate-800/40 px-3 py-2">
+                  <div className="text-sm font-semibold text-slate-100">
+                    {item.order + 1}. {item.title}
+                  </div>
+                  <p className="mt-1 text-xs text-slate-300">{item.objective}</p>
+                  {item.success_criteria.length > 0 && (
+                    <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-slate-400">
+                      {item.success_criteria.map((criterion) => (
+                        <li key={criterion}>{criterion}</li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
       </div>
     );
-  }, [plan]);
+  }, [plan, objectives]);
 
   return (
     <>

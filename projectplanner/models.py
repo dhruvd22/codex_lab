@@ -1,4 +1,4 @@
-﻿"""Core Pydantic models for the project planner module."""
+"""Core Pydantic models for the project planner module."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -61,6 +61,15 @@ class PlanRequest(BaseModel):
     target_stack: TargetStack = Field(default_factory=TargetStack)
     style: Literal["strict", "creative"] = Field("strict")
 
+class MilestoneObjective(BaseModel):
+    """Ordered milestone objective produced by the coordinator agent."""
+
+    id: str = Field(..., pattern=r"^[a-z0-9\-]+$", description="Stable identifier for the milestone.")
+    order: int = Field(..., ge=0, description="Zero-based execution order.")
+    title: str = Field(..., description="Concise milestone title.")
+    objective: str = Field(..., description="Concrete outcome delivered by the milestone.")
+    success_criteria: List[str] = Field(..., min_items=1, description="How we know the milestone is successful.")
+    dependencies: List[str] = Field(default_factory=list, description="Milestone ids that must precede this milestone.")
 
 class PromptPlan(BaseModel):
     """High-level plan extracted from the research document."""
@@ -120,6 +129,7 @@ class PlanResponse(BaseModel):
     plan: PromptPlan
     steps: List[PromptStep]
     report: AgentReport
+    objectives: List[MilestoneObjective] = Field(default_factory=list)
 
 
 class StepsResponse(BaseModel):
@@ -153,3 +163,4 @@ class StepUpdateRequest(BaseModel):
     """Request payload for updating stored steps."""
 
     steps: List[PromptStep]
+

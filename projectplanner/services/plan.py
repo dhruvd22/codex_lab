@@ -7,10 +7,12 @@ from typing import Any, Dict, Iterator, List, Tuple
 
 from fastapi import HTTPException
 
+from projectplanner.agents.coordinator_agent import CoordinatorAgent
 from projectplanner.agents.decomposer_agent import DecomposerAgent
 from projectplanner.agents.planner_agent import PlannerAgent
 from projectplanner.agents.reviewer_agent import ReviewerAgent
 from projectplanner.agents.schemas import (
+    CoordinatorAgentInput,
     DecomposerAgentInput,
     PlannerAgentInput,
     ReviewerAgentInput,
@@ -52,8 +54,31 @@ def _planning_generator(
 
     text_chunks = [chunk.text for chunk in chunks]
     yield (
-        "planner_started",
+        "coordinator_started",
         {"run_id": payload.run_id, "chunk_count": len(text_chunks)},
+    )
+
+    coordinator_input = CoordinatorAgentInput(
+        run_id=payload.run_id,
+        chunks=text_chunks,
+        target_stack=payload.target_stack,
+        style=payload.style,
+    )
+    coordinator = CoordinatorAgent()
+    coordinator_output = coordinator.synthesize_objectives(coordinator_input)
+    objectives = sorted(
+        coordinator_output.objectives,
+        key=lambda objective: objective.order,
+    )
+    store.upsert_objectives(payload.run_id, objectives)
+    yield (
+        "coordinator_completed",
+        {"run_id": payload.run_id, "objective_count": len(objectives), "objectives": [objective.dict() for objective in objectives]},
+    )
+
+    yield (
+        "planner_started",
+        {"run_id": payload.run_id, "chunk_count": len(text_chunks), "objective_count": len(objectives)},
     )
 
     planner_input = PlannerAgentInput(
@@ -61,6 +86,7 @@ def _planning_generator(
         chunks=text_chunks,
         target_stack=payload.target_stack,
         style=payload.style,
+        objectives=objectives,
     )
     planner = PlannerAgent()
     plan_output = planner.generate_plan(planner_input)
@@ -71,6 +97,7 @@ def _planning_generator(
         run_id=payload.run_id,
         plan=plan,
         target_stack=payload.target_stack,
+        objectives=objectives,
     )
     decomposer = DecomposerAgent()
     steps_output = decomposer.decompose(decomposer_input)
@@ -104,9 +131,10 @@ def _planning_generator(
         "plan": plan.dict(),
         "steps": [step.dict() for step in reviewed_steps],
         "report": _serialize_report(report),
+        "objectives": [objective.dict() for objective in objectives],
     }
     yield ("final_plan", final_payload)
-    return PlanResponse(plan=plan, steps=reviewed_steps, report=report)
+    return PlanResponse(plan=plan, steps=reviewed_steps, report=report, objectives=objectives)
 
 
 async def run_planning_workflow(payload: PlanRequest, *, store: ProjectPlannerStore) -> PlanResponse:

@@ -37,6 +37,15 @@ export type PromptPlan = {
   milestones: string[];
 };
 
+export type MilestoneObjective = {
+  id: string;
+  order: number;
+  title: string;
+  objective: string;
+  success_criteria: string[];
+  dependencies: string[];
+};
+
 export type PromptStep = {
   id: string;
   title: string;
@@ -72,6 +81,7 @@ export type PlanResponse = {
   plan: PromptPlan;
   steps: PromptStep[];
   report: AgentReport;
+  objectives: MilestoneObjective[];
 };
 
 export type StepsResponse = {
@@ -175,6 +185,7 @@ export async function generatePlan(
             plan: hydrated.plan as PromptPlan,
             steps: hydrated.steps as PromptStep[],
             report: hydrated.report as AgentReport,
+            objectives: (hydrated.objectives ?? []) as MilestoneObjective[],
           };
         }
       }

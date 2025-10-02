@@ -13,7 +13,7 @@ from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
 
-from projectplanner.models import AgentReport, PromptPlan, PromptStep
+from projectplanner.models import AgentReport, MilestoneObjective, PromptPlan, PromptStep
 
 Base = declarative_base()
 
@@ -32,6 +32,7 @@ class RunRecord(Base):
 
     chunks = relationship("ChunkRecord", cascade="all, delete-orphan", back_populates="run")
     plan = relationship("PlanRecord", uselist=False, cascade="all, delete-orphan", back_populates="run")
+    milestones = relationship("MilestoneRecord", cascade="all, delete-orphan", back_populates="run")
     steps = relationship("StepRecord", cascade="all, delete-orphan", back_populates="run")
     report = relationship("ReportRecord", uselist=False, cascade="all, delete-orphan", back_populates="run")
 
@@ -56,6 +57,21 @@ class PlanRecord(Base):
     plan_json = Column(JSON, nullable=False)
 
     run = relationship("RunRecord", back_populates="plan")
+
+class MilestoneRecord(Base):
+    __tablename__ = "milestones"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(String, ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    milestone_id = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+    objective = Column(Text, nullable=False)
+    success_criteria = Column(JSON, nullable=False)
+    dependencies = Column(JSON, nullable=False)
+    display_order = Column(Integer, nullable=False)
+
+    run = relationship("RunRecord", back_populates="milestones")
+
 
 
 class StepRecord(Base):
@@ -168,6 +184,23 @@ class ProjectPlannerStore:
         with self.session() as session:
             session.merge(PlanRecord(run_id=run_id, plan_json=plan.model_dump(mode="json")))
 
+
+    def upsert_objectives(self, run_id: str, objectives: List[MilestoneObjective]) -> None:
+        with self.session() as session:
+            session.query(MilestoneRecord).filter(MilestoneRecord.run_id == run_id).delete()
+            for objective in sorted(objectives, key=lambda item: item.order):
+                session.add(
+                    MilestoneRecord(
+                        run_id=run_id,
+                        milestone_id=objective.id,
+                        title=objective.title,
+                        objective=objective.objective,
+                        success_criteria=list(objective.success_criteria),
+                        dependencies=list(objective.dependencies),
+                        display_order=objective.order,
+                    )
+                )
+
     def upsert_steps(self, run_id: str, steps: List[PromptStep]) -> None:
         with self.session() as session:
             session.query(StepRecord).filter(StepRecord.run_id == run_id).delete()
@@ -198,6 +231,27 @@ class ProjectPlannerStore:
         if not record:
             return None
         return PromptPlan.parse_obj(record.plan_json)
+
+
+    def get_objectives(self, run_id: str) -> List[MilestoneObjective]:
+        with self.session() as session:
+            records = (
+                session.query(MilestoneRecord)
+                .filter(MilestoneRecord.run_id == run_id)
+                .order_by(MilestoneRecord.display_order)
+                .all()
+            )
+        return [
+            MilestoneObjective(
+                id=record.milestone_id,
+                order=record.display_order,
+                title=record.title,
+                objective=record.objective,
+                success_criteria=list(record.success_criteria or []),
+                dependencies=list(record.dependencies or []),
+            )
+            for record in records
+        ]
 
     def get_steps(self, run_id: str) -> List[PromptStep]:
         with self.session() as session:
