@@ -148,7 +148,7 @@ class CoordinatorAgent:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.2,
-            max_tokens=900,
+            max_completion_tokens=900,
         )
         if not response.choices:
             raise ValueError("Coordinator model returned no choices.")
