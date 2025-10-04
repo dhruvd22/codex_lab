@@ -34,9 +34,7 @@ function serializeDetails(entry: LogEntry): string | null {
   if (entry.exception) {
     blocks.push(entry.exception);
   }
-  return blocks.length ? blocks.join("
-
-") : null;
+  return blocks.length ? blocks.join("\n\n") : null;
 }
 
 export function LoggingPanel(): JSX.Element {
