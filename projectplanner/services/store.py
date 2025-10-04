@@ -14,8 +14,11 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
 
 from projectplanner.models import AgentReport, MilestoneObjective, PromptPlan, PromptStep
+from projectplanner.logging_utils import get_logger
 
 Base = declarative_base()
+
+LOGGER = get_logger(__name__)
 
 
 class RunRecord(Base):
