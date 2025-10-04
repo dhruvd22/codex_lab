@@ -220,7 +220,7 @@ class DecomposerAgent:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.25,
-            max_tokens=1100,
+            max_completion_tokens=1100,
         )
         if not response.choices:
             raise ValueError("Decomposer model returned no choices.")
