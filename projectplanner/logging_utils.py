@@ -176,7 +176,8 @@ class LogManager:
             resolved_level = _coerce_level(level)
             if resolved_level is not None:
                 target_logger.setLevel(resolved_level)
-            elif not target_logger.handlers:
+            elif target_logger.level > logging.INFO:
+                # Ensure we capture INFO level logs by default
                 target_logger.setLevel(logging.INFO)
             self._configured = True
 
