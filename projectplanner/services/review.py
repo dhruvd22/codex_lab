@@ -43,6 +43,11 @@ def summarize_strengths(plan: PromptPlan, steps: List[PromptStep]) -> List[str]:
     ]
     if any(step.cited_artifacts for step in steps):
         strengths.append("Steps cite prior artifacts to ensure continuity")
+    LOGGER.debug(
+        "Summarized strengths for plan with %s steps",
+        len(steps),
+        extra={"event": "review.strengths", "payload": {"strength_count": len(strengths)}},
+    )
     return strengths
 
 
@@ -53,4 +58,9 @@ def summarize_concerns(steps: List[PromptStep]) -> List[str]:
             issues.append(f"{step.id} needs clarification: {step.suggested_edits}")
     if not issues:
         issues.append("No blocking issues detected; proceed to execution.")
+    LOGGER.debug(
+        "Summarized concerns for %s steps",
+        len(steps),
+        extra={"event": "review.concerns", "payload": {"concern_count": len(issues)}},
+    )
     return issues

@@ -10,9 +10,11 @@ export function AppLayout({ children }: { children: ReactNode }): JSX.Element {
       <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-3">
           <span className="text-lg font-semibold text-slate-100">Project Planner</span>
-          <nav className="flex gap-2 text-sm">
+          <nav className="flex gap-2 text-sm" role="tablist">
             <button
               type="button"
+              role="tab"
+              aria-selected={activeTab === "planner"}
               onClick={() => setActiveTab("planner")}
               className={`rounded px-3 py-1 transition ${
                 activeTab === "planner"
@@ -24,6 +26,8 @@ export function AppLayout({ children }: { children: ReactNode }): JSX.Element {
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={activeTab === "logging"}
               onClick={() => setActiveTab("logging")}
               className={`rounded px-3 py-1 transition ${
                 activeTab === "logging"
@@ -36,8 +40,21 @@ export function AppLayout({ children }: { children: ReactNode }): JSX.Element {
           </nav>
         </div>
       </header>
-      <div className="mx-auto w-full max-w-6xl px-4 py-6">
-        {activeTab === "planner" ? children : <LoggingPanel />}
+      <div className="mx-auto w-full max-w-6xl px-4 py-6 space-y-6">
+        <div
+          role="tabpanel"
+          aria-hidden={activeTab !== "planner"}
+          className={activeTab === "planner" ? "" : "hidden"}
+        >
+          {children}
+        </div>
+        <div
+          role="tabpanel"
+          aria-hidden={activeTab !== "logging"}
+          className={activeTab === "logging" ? "" : "hidden"}
+        >
+          <LoggingPanel />
+        </div>
       </div>
     </div>
   );

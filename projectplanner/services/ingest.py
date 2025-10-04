@@ -133,8 +133,15 @@ def _load_from_file(file_id: str, format_hint: Optional[str]) -> str:
     path = UPLOAD_ROOT / file_id
     if not path.exists():
         raise FileNotFoundError(f"File {file_id} not found in uploads directory.")
+    raw = path.read_bytes()
     suffix = path.suffix.lstrip(".") if path.suffix else None
-    return _parse_by_format(path.read_bytes(), suffix or format_hint or "txt")
+    LOGGER.debug(
+        "Loaded %s bytes from uploaded file %s",
+        len(raw),
+        file_id,
+        extra={"event": "ingest.file.load", "payload": {"file_id": file_id, "bytes": len(raw)}},
+    )
+    return _parse_by_format(raw, suffix or format_hint or "txt")
 
 
 
@@ -143,8 +150,21 @@ def _maybe_decode_text(text: str, format_hint: Optional[str]) -> str:
         _, meta, encoded = text.split(":", 2)
         data = base64.b64decode(encoded)
         suffix = _infer_suffix_from_content_type(meta) or format_hint or "txt"
+        LOGGER.debug(
+            "Decoded base64 payload (%s bytes) with suffix %s",
+            len(data),
+            suffix,
+            extra={"event": "ingest.inline.decode", "payload": {"bytes": len(data), "suffix": suffix}},
+        )
         return _parse_by_format(data, suffix)
+    LOGGER.debug(
+        "Using inline text payload (%s chars)",
+        len(text),
+        extra={"event": "ingest.inline.text", "payload": {"chars": len(text)}},
+    )
     return text
+
+
 async def _load_from_url(url: str, format_hint: Optional[str]) -> str:
     LOGGER.info(
         "Fetching ingestion content from %s",
@@ -191,25 +211,33 @@ def _infer_suffix_from_content_type(content_type: str) -> Optional[str]:
 
 
 def _parse_by_format(data: bytes, format_hint: str) -> str:
-    suffix = format_hint.lower().lstrip(".")
+    suffix = (format_hint or "txt").lower().lstrip(".")
     if suffix == "pdf":
         try:
             from pypdf import PdfReader  # type: ignore
         except ImportError as exc:  # pragma: no cover - import guard for optional dependency
             raise RuntimeError("Install pypdf to ingest PDF files.") from exc
         reader = PdfReader(BytesIO(data))
-        text = "\n".join(page.extract_text() or "" for page in reader.pages)
-        return text
-    if suffix in {"md", "markdown"}:
-        return data.decode("utf-8", errors="ignore")
-    if suffix == "docx":
+        parsed = "\n".join(page.extract_text() or "" for page in reader.pages)
+    elif suffix in {"md", "markdown"}:
+        parsed = data.decode("utf-8", errors="ignore")
+    elif suffix == "docx":
         try:
             import docx  # type: ignore
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("Install python-docx to ingest DOCX files.") from exc
         document = docx.Document(BytesIO(data))
-        return "\n".join(p.text for p in document.paragraphs)
-    return data.decode("utf-8", errors="ignore")
+        parsed = "\n".join(p.text for p in document.paragraphs)
+    else:
+        parsed = data.decode("utf-8", errors="ignore")
+    LOGGER.debug(
+        "Parsed %s bytes as %s (%s chars)",
+        len(data),
+        suffix,
+        len(parsed),
+        extra={"event": "ingest.parse", "payload": {"suffix": suffix, "chars": len(parsed)}},
+    )
+    return parsed
 
 
 def _normalize_text(text: str) -> str:
@@ -218,6 +246,12 @@ def _normalize_text(text: str) -> str:
 
     sanitized = text.translate(_EXTRA_WHITESPACE_TRANSLATION)
     collapsed = re.sub(r"\s+", " ", sanitized).strip()
+    LOGGER.debug(
+        "Normalized text from %s to %s chars",
+        len(text),
+        len(collapsed),
+        extra={"event": "ingest.normalize", "payload": {"input_chars": len(text), "output_chars": len(collapsed)}},
+    )
     return collapsed
 
 
@@ -236,7 +270,13 @@ def _chunk_text(text: str) -> List[str]:
         start = max(end - CHUNK_OVERLAP, 0)
         if start == end:
             break
-    return [chunk for chunk in chunks if chunk]
+    filtered = [chunk for chunk in chunks if chunk]
+    LOGGER.debug(
+        "Chunked text into %s segments",
+        len(filtered),
+        extra={"event": "ingest.chunk.create", "payload": {"chunk_count": len(filtered)}},
+    )
+    return filtered
 
 
 def _dedupe_chunks(chunks: Sequence[str]) -> List[str]:
@@ -247,22 +287,48 @@ def _dedupe_chunks(chunks: Sequence[str]) -> List[str]:
         if fingerprint not in seen:
             seen.add(fingerprint)
             unique.append(chunk)
+    LOGGER.debug(
+        "Deduplicated %s chunks down to %s",
+        len(chunks),
+        len(unique),
+        extra={"event": "ingest.chunk.dedupe", "payload": {"input": len(chunks), "output": len(unique)}},
+    )
     return unique
 
 
 def _count_words(text: str) -> int:
     if not text:
+        LOGGER.debug(
+            "Word count requested for empty text",
+            extra={"event": "ingest.wordcount", "payload": {"words": 0}},
+        )
         return 0
-    return len(text.split())
+    words = len(text.split())
+    LOGGER.debug(
+        "Computed word count",
+        extra={"event": "ingest.wordcount", "payload": {"words": words}},
+    )
+    return words
 
 
 async def _embed_chunks(chunks: Sequence[str], run_id: Optional[str]) -> List[Optional[List[float]]]:
     loop = asyncio.get_running_loop()
+    LOGGER.debug(
+        "Embedding %s chunks",
+        len(chunks),
+        extra={"event": "ingest.embedding.start", "run_id": run_id, "payload": {"count": len(chunks)}},
+    )
     tasks = [
         loop.run_in_executor(None, _embed_text, chunk, run_id, idx)
         for idx, chunk in enumerate(chunks)
     ]
-    return await asyncio.gather(*tasks)
+    results = await asyncio.gather(*tasks)
+    LOGGER.debug(
+        "Embedding finished for %s chunks",
+        len(chunks),
+        extra={"event": "ingest.embedding.complete", "run_id": run_id, "payload": {"count": len(chunks)}},
+    )
+    return results
 
 
 def _embed_text(text: str, run_id: Optional[str] = None, index: Optional[int] = None) -> Optional[List[float]]:

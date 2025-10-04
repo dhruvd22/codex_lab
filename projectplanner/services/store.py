@@ -195,7 +195,7 @@ class ProjectPlannerStore:
                 .order_by(ChunkRecord.idx)
                 .all()
             )
-        return [
+        chunks = [
             StoredChunk(
                 idx=r.idx,
                 text=r.text,
@@ -204,6 +204,13 @@ class ProjectPlannerStore:
             )
             for r in records
         ]
+        LOGGER.debug(
+            "Retrieved %s chunk records for run %s",
+            len(chunks),
+            run_id,
+            extra={"event": "store.chunks.fetch", "run_id": run_id, "payload": {"count": len(chunks)}},
+        )
+        return chunks
 
     def upsert_plan(self, run_id: str, plan: PromptPlan) -> None:
         with self.session() as session:
@@ -284,7 +291,17 @@ class ProjectPlannerStore:
         with self.session() as session:
             record = session.query(PlanRecord).filter(PlanRecord.run_id == run_id).one_or_none()
         if not record:
+            LOGGER.debug(
+                "No plan record found for run %s",
+                run_id,
+                extra={"event": "store.plan.fetch", "run_id": run_id, "payload": {"found": False}},
+            )
             return None
+        LOGGER.debug(
+            "Loaded plan record for run %s",
+            run_id,
+            extra={"event": "store.plan.fetch", "run_id": run_id, "payload": {"found": True}},
+        )
         return PromptPlan.parse_obj(record.plan_json)
 
 
@@ -296,7 +313,7 @@ class ProjectPlannerStore:
                 .order_by(MilestoneRecord.display_order)
                 .all()
             )
-        return [
+        objectives = [
             MilestoneObjective(
                 id=record.milestone_id,
                 order=record.display_order,
@@ -307,6 +324,13 @@ class ProjectPlannerStore:
             )
             for record in records
         ]
+        LOGGER.debug(
+            "Retrieved %s objectives for run %s",
+            len(objectives),
+            run_id,
+            extra={"event": "store.objectives.fetch", "run_id": run_id, "payload": {"count": len(objectives)}},
+        )
+        return objectives
 
     def get_steps(self, run_id: str) -> List[PromptStep]:
         with self.session() as session:
@@ -316,15 +340,39 @@ class ProjectPlannerStore:
                 .order_by(StepRecord.step_index)
                 .all()
             )
-        return [PromptStep.parse_obj(record.step_json) for record in records]
+        steps = [PromptStep.parse_obj(record.step_json) for record in records]
+        LOGGER.debug(
+            "Retrieved %s steps for run %s",
+            len(steps),
+            run_id,
+            extra={"event": "store.steps.fetch", "run_id": run_id, "payload": {"count": len(steps)}},
+        )
+        return steps
 
     def get_report(self, run_id: str) -> Optional[AgentReport]:
         with self.session() as session:
             record = session.query(ReportRecord).filter(ReportRecord.run_id == run_id).one_or_none()
         if not record:
+            LOGGER.debug(
+                "No report found for run %s",
+                run_id,
+                extra={"event": "store.report.fetch", "run_id": run_id, "payload": {"found": False}},
+            )
             return None
+        LOGGER.debug(
+            "Loaded report for run %s",
+            run_id,
+            extra={"event": "store.report.fetch", "run_id": run_id, "payload": {"found": True}},
+        )
         return AgentReport.parse_obj(record.report_json)
 
     def run_exists(self, run_id: str) -> bool:
         with self.session() as session:
-            return session.query(RunRecord.id).filter(RunRecord.id == run_id).scalar() is not None
+            exists = session.query(RunRecord.id).filter(RunRecord.id == run_id).scalar() is not None
+        LOGGER.debug(
+            "Run %s existence check returned %s",
+            run_id,
+            exists,
+            extra={"event": "store.run.exists", "run_id": run_id, "payload": {"exists": exists}},
+        )
+        return exists

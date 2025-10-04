@@ -231,6 +231,11 @@ def _planning_generator(
 async def run_planning_workflow(payload: PlanRequest, *, store: ProjectPlannerStore) -> PlanResponse:
     """Execute the planning workflow and return the final response."""
 
+    LOGGER.debug(
+        "Running planning workflow coroutine for run %s",
+        payload.run_id,
+        extra={"event": "planning.run.execute", "run_id": payload.run_id, "payload": {"mode": "coroutine"}},
+    )
     generator = _planning_generator(payload, store=store)
     final_response: PlanResponse | None = None
     while True:
@@ -241,6 +246,11 @@ async def run_planning_workflow(payload: PlanRequest, *, store: ProjectPlannerSt
             break
     if final_response is None:
         raise RuntimeError("Planning did not produce a final response.")
+    LOGGER.debug(
+        "Planning coroutine completed for run %s",
+        payload.run_id,
+        extra={"event": "planning.run.complete", "run_id": payload.run_id, "payload": {"step_count": len(final_response.steps) if final_response else 0}},
+    )
     return final_response
 
 
@@ -249,6 +259,11 @@ def planning_event_stream(
 ) -> Iterator[PlanningEvent]:
     """Expose the planning lifecycle as an iterator for streaming."""
 
+    LOGGER.debug(
+        "Creating planning event stream for run %s",
+        payload.run_id,
+        extra={"event": "planning.stream.create", "run_id": payload.run_id},
+    )
     return _planning_generator(payload, store=store)
 
 
