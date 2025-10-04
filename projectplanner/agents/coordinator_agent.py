@@ -8,7 +8,7 @@ from typing import Dict, Iterable, List, Sequence
 
 from projectplanner.agents.schemas import CoordinatorAgentInput, CoordinatorAgentOutput
 from projectplanner.logging_utils import get_logger, log_prompt
-from projectplanner.agents._openai_helpers import create_chat_completion
+from projectplanner.agents._openai_helpers import create_chat_completion, extract_message_content
 from projectplanner.models import MilestoneObjective
 
 try:  # pragma: no cover - optional dependency guard
@@ -155,10 +155,10 @@ class CoordinatorAgent:
         if not response.choices:
             raise ValueError("Coordinator model returned no choices.")
         message = response.choices[0].message
-        content = getattr(message, "content", None)
+        content = extract_message_content(message)
         if not content:
             raise ValueError("Coordinator model returned empty content.")
-        return content.strip()
+        return content
 
     def _build_user_prompt(self, payload: CoordinatorAgentInput, context: str) -> str:
         stack = payload.target_stack

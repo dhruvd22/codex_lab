@@ -8,7 +8,7 @@ import re
 from typing import List, Sequence
 
 from projectplanner.agents.schemas import PlannerAgentInput, PlannerAgentOutput
-from projectplanner.agents._openai_helpers import create_chat_completion
+from projectplanner.agents._openai_helpers import create_chat_completion, extract_message_content
 from projectplanner.logging_utils import get_logger, log_prompt
 from projectplanner.models import PromptPlan
 
@@ -184,7 +184,7 @@ class PlannerAgent:
         if not response.choices:
             raise ValueError("Planner model returned no choices.")
         message = response.choices[0].message
-        content = getattr(message, "content", None)
+        content = extract_message_content(message)
         if not content:
             raise ValueError("Planner model returned empty content.")
 
