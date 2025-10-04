@@ -1,11 +1,15 @@
 """Shared logging utilities for project planner and future modules."""
 from __future__ import annotations
 
+import inspect
 import logging
 import os
+import sys
+import threading
 from collections import deque
 from datetime import datetime, timezone
 from threading import RLock
+from types import FrameType
 from typing import Any, Deque, Dict, Mapping, MutableMapping, Optional, Sequence, Union
 
 JSONValue = Union[str, int, float, bool, None, list["JSONValue"], Dict[str, "JSONValue"]]
@@ -232,6 +236,181 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
+_FUNCTION_CALL_TRACE_ENABLED = False
+_FUNCTION_CALL_TRACE_LOCK = RLock()
+_FUNCTION_CALL_TRACE_PREVIOUS: dict[str, object] = {"sys": None, "threading": None}
+_FUNCTION_CALL_TRACE_LOGGER_NAME = "projectplanner.trace"
+_CALL_TRACE_THREAD_STATE = threading.local()
+
+
+def _normalize_prefixes(prefixes: Optional[Sequence[str]]) -> tuple[str, ...]:
+    if not prefixes:
+        return ("projectplanner", "app")
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for prefix in prefixes:
+        if not prefix:
+            continue
+        value = prefix.strip().rstrip('.')
+        if not value or value in seen:
+            continue
+        cleaned.append(value)
+        seen.add(value)
+    if not cleaned:
+        return ("projectplanner", "app")
+    return tuple(cleaned)
+
+
+def _normalize_excludes(excludes: Optional[Sequence[str]]) -> tuple[str, ...]:
+    if not excludes:
+        return ()
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in excludes:
+        if not item:
+            continue
+        value = item.strip().rstrip('.')
+        if not value or value in seen:
+            continue
+        cleaned.append(value)
+        seen.add(value)
+    return tuple(cleaned)
+
+
+def _format_call_arg(value: Any, limit: int = 160) -> str:
+    try:
+        text = repr(value)
+    except Exception:
+        text = f"<unrepr {type(value).__name__}>"
+    return _preview_text(text, limit)
+
+
+def _should_trace_module(module: str, packages: tuple[str, ...], excludes: tuple[str, ...]) -> bool:
+    if not module:
+        return False
+    for prefix in excludes:
+        if module == prefix or module.startswith(prefix + '.'):
+            return False
+    for prefix in packages:
+        if module == prefix or module.startswith(prefix + '.'):
+            return True
+    return False
+
+
+def enable_function_call_logging(
+    *,
+    packages: Optional[Sequence[str]] = None,
+    exclude_modules: Optional[Sequence[str]] = None,
+    logger: Optional[logging.Logger] = None,
+    level: str | int | None = None,
+) -> None:
+    global _FUNCTION_CALL_TRACE_ENABLED, _FUNCTION_CALL_TRACE_PREVIOUS
+    with _FUNCTION_CALL_TRACE_LOCK:
+        if _FUNCTION_CALL_TRACE_ENABLED:
+            return
+        ensure_configured()
+        prefixes = _normalize_prefixes(packages)
+        base_excludes = list(exclude_modules or [])
+        excludes = _normalize_excludes(base_excludes)
+        target_logger = logger or logging.getLogger(_FUNCTION_CALL_TRACE_LOGGER_NAME)
+        resolved_level = _coerce_level(level)
+        if resolved_level is not None:
+            target_logger.setLevel(resolved_level)
+        trace_state = _CALL_TRACE_THREAD_STATE
+
+        def tracefunc(frame: FrameType, event: str, arg):
+            if event != 'call':
+                return tracefunc
+            module = frame.f_globals.get('__name__', '')
+            if not _should_trace_module(module, prefixes, excludes):
+                return tracefunc
+            if getattr(trace_state, 'active', False):
+                return tracefunc
+            trace_state.active = True
+            try:
+                func_name = frame.f_code.co_name
+                if not func_name or func_name.startswith('<'):
+                    return tracefunc
+                qualname = getattr(frame.f_code, 'co_qualname', func_name)
+                qualified = f"{module}.{qualname}" if module else qualname
+                preview_items: list[str] = []
+                try:
+                    arginfo = inspect.getargvalues(frame)
+                    for name in list(arginfo.args)[:5]:
+                        if name in {'self', 'cls'}:
+                            continue
+                        preview_items.append(f"{name}={_format_call_arg(arginfo.locals.get(name))}")
+                    if arginfo.varargs:
+                        preview_items.append(f"*{arginfo.varargs}={_format_call_arg(arginfo.locals.get(arginfo.varargs))}")
+                    if arginfo.keywords:
+                        preview_items.append(f"**{arginfo.keywords}={_format_call_arg(arginfo.locals.get(arginfo.keywords))}")
+                except Exception:
+                    preview_items = []
+                payload: MutableMapping[str, Any] = {
+                    'qualified_name': qualified,
+                    'module': module,
+                    'function': func_name,
+                    'file': frame.f_code.co_filename,
+                    'line': frame.f_code.co_firstlineno,
+                }
+                if preview_items:
+                    payload['arguments'] = preview_items
+                target_logger.info(
+                    'Call %s',
+                    qualified,
+                    extra={
+                        'event': 'function.call',
+                        'payload': payload,
+                    },
+                )
+            finally:
+                trace_state.active = False
+            return tracefunc
+
+        _FUNCTION_CALL_TRACE_PREVIOUS = {
+            'sys': sys.getprofile(),
+            'threading': threading.getprofile(),
+        }
+        sys.setprofile(tracefunc)
+        threading.setprofile(tracefunc)
+        _FUNCTION_CALL_TRACE_ENABLED = True
+        target_logger.info(
+            'Function call tracing enabled',
+            extra={
+                'event': 'function.trace.enabled',
+                'payload': {
+                    'packages': list(prefixes),
+                    'excludes': list(excludes),
+                },
+            },
+        )
+
+
+def disable_function_call_logging() -> None:
+    global _FUNCTION_CALL_TRACE_ENABLED, _FUNCTION_CALL_TRACE_PREVIOUS
+    with _FUNCTION_CALL_TRACE_LOCK:
+        if not _FUNCTION_CALL_TRACE_ENABLED:
+            return
+        prev_sys = _FUNCTION_CALL_TRACE_PREVIOUS.get('sys')
+        prev_threading = _FUNCTION_CALL_TRACE_PREVIOUS.get('threading')
+        sys.setprofile(prev_sys)
+        threading.setprofile(prev_threading)
+        _FUNCTION_CALL_TRACE_ENABLED = False
+        _FUNCTION_CALL_TRACE_PREVIOUS = {'sys': None, 'threading': None}
+
+
+def is_function_call_logging_enabled() -> bool:
+    with _FUNCTION_CALL_TRACE_LOCK:
+        return _FUNCTION_CALL_TRACE_ENABLED
+
+
+def _should_enable_call_logging() -> bool:
+    flag = os.getenv('PROJECTPLANNER_TRACE_CALLS')
+    if flag is None:
+        return True
+    return flag.strip().lower() not in {'0', 'false', 'no', 'off'}
+
+
 def log_prompt(
     *,
     agent: str,
@@ -269,10 +448,22 @@ def log_prompt(
         },
     )
 
+if _should_enable_call_logging():
+    try:
+        enable_function_call_logging()
+    except Exception:
+        logging.getLogger(_FUNCTION_CALL_TRACE_LOGGER_NAME).exception(
+            "Failed to enable function call logging.",
+            extra={"event": "function.trace.error"},
+        )
+
 
 __all__ = [
     "configure_logging",
+    "disable_function_call_logging",
+    "enable_function_call_logging",
     "get_log_manager",
     "get_logger",
+    "is_function_call_logging_enabled",
     "log_prompt",
 ]
