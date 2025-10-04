@@ -17,7 +17,7 @@ except Exception:  # pragma: no cover
 
 LOGGER = logging.getLogger(__name__)
 
-DEFAULT_DECOMPOSER_MODEL = os.getenv("PROJECTPLANNER_DECOMPOSER_MODEL", "gpt-5.0")
+DEFAULT_DECOMPOSER_MODEL = os.getenv("PROJECTPLANNER_DECOMPOSER_MODEL", "gpt-5")
 MAX_CONTEXT_CHARS = 14000
 
 DECOMPOSER_SYSTEM_PROMPT = (

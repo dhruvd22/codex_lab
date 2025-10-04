@@ -18,7 +18,7 @@ except Exception:  # pragma: no cover
 
 LOGGER = logging.getLogger(__name__)
 
-DEFAULT_PLANNER_MODEL = os.getenv("PROJECTPLANNER_PLANNER_MODEL", "gpt-5.0")
+DEFAULT_PLANNER_MODEL = os.getenv("PROJECTPLANNER_PLANNER_MODEL", "gpt-5")
 MAX_CONTEXT_CHARS = 18000
 
 PLANNER_SYSTEM_PROMPT = (
