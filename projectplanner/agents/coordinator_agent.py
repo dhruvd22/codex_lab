@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import re
 from typing import Dict, Iterable, List, Sequence
 
 from projectplanner.agents.schemas import CoordinatorAgentInput, CoordinatorAgentOutput
+from projectplanner.logging_utils import get_logger, log_prompt
 from projectplanner.models import MilestoneObjective
 
 try:  # pragma: no cover - optional dependency guard
@@ -15,7 +15,7 @@ try:  # pragma: no cover - optional dependency guard
 except Exception:  # pragma: no cover
     OpenAI = None  # type: ignore[assignment]
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = get_logger(__name__)
 
 DEFAULT_COORDINATOR_MODEL = os.getenv("PROJECTPLANNER_COORDINATOR_MODEL", "gpt-5")
 MAX_CONTEXT_CHARS = 18000
@@ -41,24 +41,101 @@ class CoordinatorAgent:
             try:
                 self._client = OpenAI(api_key=api_key)
             except Exception:  # pragma: no cover - initialization failure fallback
-                LOGGER.warning("Failed to initialize OpenAI client for CoordinatorAgent; falling back to heuristics.", exc_info=True)
+                LOGGER.warning(
+                    "Failed to initialize OpenAI client for CoordinatorAgent; falling back to heuristics.",
+                    exc_info=True,
+                    extra={"event": "agent.coordinator.init_failure"},
+                )
                 self._client = None
+
+        if self._client:
+            LOGGER.info(
+                "Coordinator agent using OpenAI model %s",
+                self._model,
+                extra={"event": "agent.coordinator.ready"},
+            )
+        else:
+            LOGGER.info(
+                "Coordinator agent running in heuristic mode (OpenAI unavailable).",
+                extra={"event": "agent.coordinator.heuristic_mode"},
+            )
 
     def synthesize_objectives(self, payload: CoordinatorAgentInput) -> CoordinatorAgentOutput:
         """Produce ordered milestone objectives using GPT-5 with heuristic fallback."""
 
+        LOGGER.info(
+            "Coordinator agent synthesizing objectives for run %s",
+            payload.run_id,
+            extra={
+                "event": "agent.coordinator.start",
+                "run_id": payload.run_id,
+                "payload": {"chunk_count": len(payload.chunks), "style": payload.style},
+            },
+        )
         objectives: List[MilestoneObjective] = []
+        used_model = False
         if self._client:
             context = self._compress_chunks(payload.chunks)
             user_prompt = self._build_user_prompt(payload, context)
+            log_prompt(
+                agent="CoordinatorAgent",
+                role="system",
+                prompt=COORDINATOR_SYSTEM_PROMPT,
+                run_id=payload.run_id,
+                model=self._model,
+                metadata={"style": payload.style},
+            )
+            log_prompt(
+                agent="CoordinatorAgent",
+                role="user",
+                prompt=user_prompt,
+                run_id=payload.run_id,
+                model=self._model,
+                metadata={"style": payload.style, "chunk_count": len(payload.chunks)},
+            )
             try:
                 raw = self._request_objectives(user_prompt)
-                objectives = self._parse_objectives(raw)
+                parsed = self._parse_objectives(raw)
+                if parsed:
+                    objectives = parsed
+                    used_model = True
+                    LOGGER.info(
+                        "Coordinator agent received %s GPT objectives",
+                        len(objectives),
+                        extra={
+                            "event": "agent.coordinator.gpt_success",
+                            "run_id": payload.run_id,
+                            "payload": {"count": len(objectives)},
+                        },
+                    )
             except Exception:  # pragma: no cover - rely on fallback below
-                LOGGER.warning("Coordinator GPT synthesis failed; reverting to heuristic objectives.", exc_info=True)
+                LOGGER.warning(
+                    "Coordinator GPT synthesis failed; reverting to heuristic objectives.",
+                    exc_info=True,
+                    extra={"event": "agent.coordinator.gpt_failure", "run_id": payload.run_id},
+                )
                 objectives = []
         if not objectives:
             objectives = self._fallback_objectives(payload)
+        if not used_model:
+            LOGGER.info(
+                "Coordinator agent falling back to heuristics (%s objectives).",
+                len(objectives),
+                extra={
+                    "event": "agent.coordinator.heuristic_result",
+                    "run_id": payload.run_id,
+                    "payload": {"count": len(objectives)},
+                },
+            )
+        LOGGER.info(
+            "Coordinator agent completed with %s objectives.",
+            len(objectives),
+            extra={
+                "event": "agent.coordinator.complete",
+                "run_id": payload.run_id,
+                "payload": {"count": len(objectives)},
+            },
+        )
         return CoordinatorAgentOutput(objectives=objectives)
 
     def _request_objectives(self, user_prompt: str) -> str:

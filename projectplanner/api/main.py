@@ -17,11 +17,19 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from projectplanner.api.routers import prompts
+from projectplanner.logging_utils import configure_logging, get_logger
 from projectplanner.services.store import ProjectPlannerStore
 
 MAX_BODY_SIZE_BYTES = 2 * 1024 * 1024  # 2 MiB upper bound for uploads
 RATE_LIMIT_REQUESTS = 60
 RATE_LIMIT_WINDOW_SECONDS = 60
+
+
+configure_logging(
+    logger_name=os.getenv("PROJECTPLANNER_LOGGER_NAME") or None,
+    level=os.getenv("PROJECTPLANNER_LOG_LEVEL"),
+)
+LOGGER = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -53,15 +61,42 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         while bucket and now - bucket[0] > RATE_LIMIT_WINDOW_SECONDS:
             bucket.popleft()
         if len(bucket) > RATE_LIMIT_REQUESTS:
+            LOGGER.warning(
+                "Rate limit exceeded for host %s",
+                host,
+                extra={
+                    "event": "api.rate_limit",
+                    "payload": {"attempts": len(bucket), "window_seconds": RATE_LIMIT_WINDOW_SECONDS},
+                },
+            )
             raise HTTPException(status_code=429, detail="Rate limit exceeded. Try later.")
-        if request.headers.get("content-length") and int(request.headers["content-length"]) > MAX_BODY_SIZE_BYTES:
-            raise HTTPException(status_code=413, detail="Request entity too large.")
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                declared_size = int(content_length)
+            except ValueError:
+                declared_size = MAX_BODY_SIZE_BYTES + 1
+            if declared_size > MAX_BODY_SIZE_BYTES:
+                LOGGER.warning(
+                    "Rejected oversized payload from %s (%s bytes)",
+                    host,
+                    content_length,
+                    extra={
+                        "event": "api.payload_too_large",
+                        "payload": {"bytes": declared_size, "limit": MAX_BODY_SIZE_BYTES},
+                    },
+                )
+                raise HTTPException(status_code=413, detail="Request entity too large.")
         return await call_next(request)
 
 
 def create_app() -> FastAPI:
     """Instantiate and configure the FastAPI application."""
 
+    LOGGER.info(
+        "Creating Project Planner FastAPI application.",
+        extra={"event": "api.bootstrap"},
+    )
     app = FastAPI(title="Project Planner API", version="0.1.0")
 
     # Basic CORS defaults suitable for local development and preview deployments.
@@ -76,6 +111,11 @@ def create_app() -> FastAPI:
 
     store = ProjectPlannerStore.from_env()
     store.ensure_schema()
+    LOGGER.info(
+        "Persistence layer ready using %s dialect.",
+        store.engine.dialect.name,
+        extra={"event": "store.schema.ready"},
+    )
     app.state.store = store
 
     app.include_router(prompts.router, prefix="/api/projectplanner", tags=["projectplanner"])
@@ -92,6 +132,13 @@ def _configure_frontend(app: FastAPI) -> None:
     """Serve the static UI build when available and expose a landing page."""
 
     modules = _discover_frontend_modules()
+    module_slugs = [module.slug for module in modules]
+    LOGGER.debug(
+        "Discovered %s frontend module(s): %s",
+        len(modules),
+        module_slugs or ["<none>"],
+        extra={"event": "frontend.discover", "payload": {"modules": module_slugs}},
+    )
     app.state.frontend_modules = modules
 
     global_next_static_mounted = False

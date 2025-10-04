@@ -17,11 +17,16 @@ import httpx
 from projectplanner.models import DocumentStats, IngestionRequest, IngestionResponse
 from projectplanner.services.store import ProjectPlannerStore, StoredChunk
 
+from projectplanner.logging_utils import get_logger, log_prompt
+
 UPLOAD_ROOT = (Path(__file__).resolve().parent / "../data/uploads").resolve()
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 
 CHUNK_CHAR_LIMIT = 1200
 CHUNK_OVERLAP = 200
+
+
+LOGGER = get_logger(__name__)
 
 
 _EXTRA_WHITESPACE_TRANSLATION = {
@@ -45,11 +50,44 @@ async def ingest_document(payload: IngestionRequest, *, store: ProjectPlannerSto
     """Ingest content, persist chunks, and return run metadata."""
 
     run_id = str(uuid.uuid4())
+    LOGGER.info(
+        "Starting ingestion run %s",
+        run_id,
+        extra={
+            "event": "ingest.start",
+            "run_id": run_id,
+            "payload": {
+                "has_text": bool(payload.text),
+                "has_url": bool(payload.url),
+                "has_file": bool(payload.file_id),
+            },
+        },
+    )
     raw_text, source = await _load_text(payload)
+    LOGGER.info(
+        "Loaded source for run %s from %s",
+        run_id,
+        source,
+        extra={
+            "event": "ingest.source_loaded",
+            "run_id": run_id,
+            "payload": {"source": source, "raw_chars": len(raw_text)},
+        },
+    )
     normalized_text = _normalize_text(raw_text)
     chunks = _chunk_text(normalized_text)
     unique_chunks = _dedupe_chunks(chunks)
-    embeddings = await _embed_chunks(unique_chunks)
+    LOGGER.debug(
+        "Chunked document into %s unique segments (from %s chunks)",
+        len(unique_chunks),
+        len(chunks),
+        extra={
+            "event": "ingest.chunking",
+            "run_id": run_id,
+            "payload": {"chunk_count": len(chunks), "unique_count": len(unique_chunks)},
+        },
+    )
+    embeddings = await _embed_chunks(unique_chunks, run_id=run_id)
 
     stored_chunks = [
         StoredChunk(idx=i, text=chunk, embedding=embedding, metadata={"source": source})
@@ -64,6 +102,19 @@ async def ingest_document(payload: IngestionRequest, *, store: ProjectPlannerSto
 
     store.register_run(run_id, source=source, stats=stats.dict())
     store.add_chunks(run_id, stored_chunks)
+    LOGGER.info(
+        "Completed ingestion run %s",
+        run_id,
+        extra={
+            "event": "ingest.complete",
+            "run_id": run_id,
+            "payload": {
+                "word_count": stats.word_count,
+                "chunk_count": stats.chunk_count,
+                "source": source,
+            },
+        },
+    )
     return IngestionResponse(run_id=run_id, stats=stats)
 
 
@@ -95,12 +146,35 @@ def _maybe_decode_text(text: str, format_hint: Optional[str]) -> str:
         return _parse_by_format(data, suffix)
     return text
 async def _load_from_url(url: str, format_hint: Optional[str]) -> str:
+    LOGGER.info(
+        "Fetching ingestion content from %s",
+        url,
+        extra={"event": "ingest.fetch.start", "payload": {"url": url}},
+    )
     async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.get(url)
-        response.raise_for_status()
-        content_type = response.headers.get("content-type", "text/plain")
-        suffix = _infer_suffix_from_content_type(content_type)
-        return _parse_by_format(response.content, suffix or format_hint or "txt")
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+        except Exception:
+            LOGGER.warning(
+                "Failed to fetch ingestion content from %s",
+                url,
+                exc_info=True,
+                extra={"event": "ingest.fetch.error", "payload": {"url": url}},
+            )
+            raise
+    content_type = response.headers.get("content-type", "text/plain")
+    suffix = _infer_suffix_from_content_type(content_type)
+    LOGGER.info(
+        "Fetched %s bytes from %s",
+        len(response.content),
+        url,
+        extra={
+            "event": "ingest.fetch.complete",
+            "payload": {"url": url, "content_type": content_type},
+        },
+    )
+    return _parse_by_format(response.content, suffix or format_hint or "txt")
 
 
 def _infer_suffix_from_content_type(content_type: str) -> Optional[str]:
@@ -182,21 +256,52 @@ def _count_words(text: str) -> int:
     return len(text.split())
 
 
-async def _embed_chunks(chunks: Sequence[str]) -> List[Optional[List[float]]]:
+async def _embed_chunks(chunks: Sequence[str], run_id: Optional[str]) -> List[Optional[List[float]]]:
     loop = asyncio.get_running_loop()
-    return await asyncio.gather(*(loop.run_in_executor(None, _embed_text, chunk) for chunk in chunks))
+    tasks = [
+        loop.run_in_executor(None, _embed_text, chunk, run_id, idx)
+        for idx, chunk in enumerate(chunks)
+    ]
+    return await asyncio.gather(*tasks)
 
 
-def _embed_text(text: str) -> Optional[List[float]]:
+def _embed_text(text: str, run_id: Optional[str] = None, index: Optional[int] = None) -> Optional[List[float]]:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         digest = hashlib.sha256(text.encode("utf-8")).digest()
+        LOGGER.debug(
+            "Embedding fallback (hash) used for chunk %s",
+            index,
+            extra={
+                "event": "ingest.embedding.hash",
+                "run_id": run_id,
+                "payload": {"index": index},
+            },
+        )
         return [int(b) / 255.0 for b in digest[:64]]
     try:
         from openai import OpenAI
 
         client = OpenAI(api_key=api_key)
+        log_prompt(
+            agent="EmbeddingService",
+            role="embedding",
+            prompt=text,
+            run_id=run_id,
+            model="text-embedding-3-small",
+            metadata={"index": index},
+        )
         response = client.embeddings.create(input=[text], model="text-embedding-3-small")
         return list(response.data[0].embedding)
     except Exception:
+        LOGGER.warning(
+            "Embedding request failed for chunk %s",
+            index,
+            exc_info=True,
+            extra={
+                "event": "ingest.embedding.failure",
+                "run_id": run_id,
+                "payload": {"index": index},
+            },
+        )
         return None

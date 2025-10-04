@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from typing import List, Tuple
 
+from projectplanner.logging_utils import get_logger
 from projectplanner.models import PromptPlan, PromptStep
+
+LOGGER = get_logger(__name__)
 
 
 def evaluate_step(step: PromptStep) -> Tuple[float, List[str]]:
@@ -23,8 +26,14 @@ def evaluate_step(step: PromptStep) -> Tuple[float, List[str]]:
     if len(step.system_prompt.split()) > 250:
         deductions.append("Condense the system prompt to stay focused.")
 
-    score = max(0.0, 1.0 - 0.15 * len(deductions))
-    return round(score, 2), deductions
+    score = round(max(0.0, 1.0 - 0.15 * len(deductions)), 2)
+    LOGGER.debug(
+        "Evaluated step %s with score %.2f",
+        step.id,
+        score,
+        extra={"event": "review.step", "payload": {"deduction_count": len(deductions)}},
+    )
+    return score, deductions
 
 
 def summarize_strengths(plan: PromptPlan, steps: List[PromptStep]) -> List[str]:

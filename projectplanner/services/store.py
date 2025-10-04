@@ -124,6 +124,15 @@ class ProjectPlannerStore:
 
     def ensure_schema(self) -> None:
         Base.metadata.create_all(self.engine)
+        try:
+            safe_url = self.engine.url.render_as_string(hide_password=True)
+        except Exception:  # pragma: no cover - defensive
+            safe_url = str(self.engine.url)
+        LOGGER.debug(
+            "Ensured project planner schema on %s",
+            safe_url,
+            extra={"event": "store.schema.ensure"},
+        )
 
     @contextmanager
     def session(self) -> Generator[Session, None, None]:
@@ -148,8 +157,14 @@ class ProjectPlannerStore:
                     chunk_count=stats["chunk_count"],
                 )
             )
+        LOGGER.info(
+            "Registered ingestion run %s",
+            run_id,
+            extra={"event": "store.run.register", "run_id": run_id, "payload": {"source": source}},
+        )
 
     def add_chunks(self, run_id: str, chunks: Iterable[StoredChunk]) -> None:
+        count = 0
         with self.session() as session:
             for chunk in chunks:
                 session.add(
@@ -161,6 +176,13 @@ class ProjectPlannerStore:
                         metadata_json=chunk.metadata,
                     )
                 )
+                count += 1
+        LOGGER.debug(
+            "Persisted %s chunks for run %s",
+            count,
+            run_id,
+            extra={"event": "store.chunks.add", "run_id": run_id, "payload": {"count": count}},
+        )
 
     def get_chunks(self, run_id: str) -> List[StoredChunk]:
         with self.session() as session:
@@ -183,6 +205,11 @@ class ProjectPlannerStore:
     def upsert_plan(self, run_id: str, plan: PromptPlan) -> None:
         with self.session() as session:
             session.merge(PlanRecord(run_id=run_id, plan_json=plan.model_dump(mode="json")))
+        LOGGER.info(
+            "Upserted plan for run %s",
+            run_id,
+            extra={"event": "store.plan.upsert", "run_id": run_id},
+        )
 
 
     def upsert_objectives(self, run_id: str, objectives: List[MilestoneObjective]) -> None:
@@ -200,6 +227,12 @@ class ProjectPlannerStore:
                         display_order=objective.order,
                     )
                 )
+        LOGGER.info(
+            "Upserted %s objectives for run %s",
+            len(objectives),
+            run_id,
+            extra={"event": "store.objectives.upsert", "run_id": run_id, "payload": {"count": len(objectives)}},
+        )
 
     def upsert_steps(self, run_id: str, steps: List[PromptStep]) -> None:
         with self.session() as session:
@@ -212,18 +245,37 @@ class ProjectPlannerStore:
                         step_json=step.model_dump(mode="json"),
                     )
                 )
+        LOGGER.info(
+            "Upserted %s steps for run %s",
+            len(steps),
+            run_id,
+            extra={"event": "store.steps.upsert", "run_id": run_id, "payload": {"count": len(steps)}},
+        )
 
     def upsert_report(self, run_id: str, report: AgentReport) -> None:
         with self.session() as session:
             session.merge(ReportRecord(run_id=run_id, report_json=report.model_dump(mode="json")))
+        LOGGER.info(
+            "Upserted reviewer report for run %s",
+            run_id,
+            extra={"event": "store.report.upsert", "run_id": run_id, "payload": {"overall_score": report.overall_score}},
+        )
 
     def attach_plan_context(self, run_id: str, *, target_stack: dict, style: str) -> None:
+        updated = False
         with self.session() as session:
             record = session.get(RunRecord, run_id)
             if not record:
                 return
             record.target_stack = target_stack
             record.style = style
+            updated = True
+        if updated:
+            LOGGER.debug(
+                "Attached plan context for run %s",
+                run_id,
+                extra={"event": "store.run.context", "run_id": run_id, "payload": {"style": style}},
+            )
 
     def get_plan(self, run_id: str) -> Optional[PromptPlan]:
         with self.session() as session:

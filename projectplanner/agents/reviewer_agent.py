@@ -5,8 +5,11 @@ from datetime import datetime
 from typing import List
 
 from projectplanner.agents.schemas import ReviewerAgentInput, ReviewerAgentOutput
+from projectplanner.logging_utils import get_logger
 from projectplanner.models import AgentReport, PromptStep, StepFeedback
 from projectplanner.services import review as review_service
+
+LOGGER = get_logger(__name__)
 
 
 class ReviewerAgent:
@@ -16,6 +19,12 @@ class ReviewerAgent:
         reviewed_steps: List[PromptStep] = []
         feedback: List[StepFeedback] = []
 
+        LOGGER.info(
+            "Reviewer agent scoring %s steps for run %s",
+            len(payload.steps),
+            payload.run_id,
+            extra={"event": "agent.reviewer.start", "run_id": payload.run_id, "payload": {"step_count": len(payload.steps)}},
+        )
         for step in payload.steps:
             score, suggestions = review_service.evaluate_step(step)
             step.rubric_score = score
@@ -42,4 +51,10 @@ class ReviewerAgent:
             concerns=concerns,
             step_feedback=feedback,
         )
-        return ReviewerAgentOutput(steps=reviewed_steps, report=report)
+        LOGGER.info(
+            "Reviewer agent completed for run %s with score %.2f",
+            payload.run_id,
+            overall,
+            extra={"event": "agent.reviewer.complete", "run_id": payload.run_id, "payload": {"overall_score": overall}},
+        )
+        return ReviewerAgentOutput(steps=reviewed_steps, report=report)

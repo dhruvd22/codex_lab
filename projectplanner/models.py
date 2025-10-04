@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 
@@ -159,6 +159,29 @@ class ExportResponse(BaseModel):
 
     metadata: ExportMetadata
     content: str
+
+class LogEntry(BaseModel):
+    """Structured log entry emitted by the logging manager."""
+
+    sequence: int = Field(..., ge=1, description="Monotonic cursor for incremental retrieval.")
+    timestamp: datetime = Field(..., description="UTC timestamp when the log was recorded.")
+    level: str = Field(..., description="Severity level name.")
+    logger: str = Field(..., description="Logger name that emitted the record.")
+    message: str = Field(..., description="Primary log message.")
+    run_id: Optional[str] = Field(None, description="Associated run identifier when available.")
+    event: Optional[str] = Field(None, description="Categorical event identifier supplied via extra context.")
+    payload: Optional[Dict[str, Any]] = Field(None, description="Structured payload attached to the record.")
+    exception: Optional[str] = Field(None, description="Rendered traceback when the record captured an exception.")
+
+
+class LogsResponse(BaseModel):
+    """Envelope returned when fetching captured logs."""
+
+    logs: List[LogEntry] = Field(default_factory=list)
+    cursor: int = Field(..., ge=0, description="Highest sequence id available on the server.")
+
+
+
 class StepUpdateRequest(BaseModel):
     """Request payload for updating stored steps."""
 

@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import re
 from typing import List, Optional, Sequence
 
 from projectplanner.agents.schemas import DecomposerAgentInput, DecomposerAgentOutput
+from projectplanner.logging_utils import get_logger, log_prompt
 from projectplanner.models import MilestoneObjective, PromptStep
 
 try:  # pragma: no cover - optional dependency guard
@@ -15,7 +15,7 @@ try:  # pragma: no cover - optional dependency guard
 except Exception:  # pragma: no cover
     OpenAI = None  # type: ignore[assignment]
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = get_logger(__name__)
 
 DEFAULT_DECOMPOSER_MODEL = os.getenv("PROJECTPLANNER_DECOMPOSER_MODEL", "gpt-5")
 MAX_CONTEXT_CHARS = 14000
@@ -39,18 +39,60 @@ class DecomposerAgent:
             try:
                 self._client = OpenAI(api_key=api_key)
             except Exception:  # pragma: no cover - initialization failure fallback
-                LOGGER.warning("Failed to initialize OpenAI client for DecomposerAgent; heuristics will be used.", exc_info=True)
+                LOGGER.warning(
+                    "Failed to initialize OpenAI client for DecomposerAgent; heuristics will be used.",
+                    exc_info=True,
+                    extra={"event": "agent.decomposer.init_failure"},
+                )
                 self._client = None
+
+        if self._client:
+            LOGGER.info(
+                "Decomposer agent using OpenAI model %s",
+                self._model,
+                extra={"event": "agent.decomposer.ready"},
+            )
+        else:
+            LOGGER.info(
+                "Decomposer agent running in heuristic mode (OpenAI unavailable).",
+                extra={"event": "agent.decomposer.heuristic_mode"},
+            )
 
     def decompose(self, payload: DecomposerAgentInput) -> DecomposerAgentOutput:
         steps: List[PromptStep] = []
         previous_summaries: List[str] = []
         total = len(payload.plan.milestones)
+        LOGGER.info(
+            "Decomposer agent generating %s steps for run %s",
+            total,
+            payload.run_id,
+            extra={
+                "event": "agent.decomposer.start",
+                "run_id": payload.run_id,
+                "payload": {"milestone_count": total},
+            },
+        )
+        using_gpt = bool(self._client)
+        if not using_gpt:
+            LOGGER.info(
+                "Decomposer agent operating with heuristic fallbacks for all milestones.",
+                extra={"event": "agent.decomposer.heuristic_mode_run", "run_id": payload.run_id},
+            )
         for index, milestone_title in enumerate(payload.plan.milestones):
             step_id = f"step-{index + 1:03d}"
             objective = self._find_objective(index, milestone_title, payload.objectives)
             fallback_step = self._build_fallback_step(payload, index, milestone_title, objective, step_id)
             step = fallback_step
+            LOGGER.debug(
+                "Preparing step %s for milestone '%s'",
+                step_id,
+                milestone_title,
+                extra={
+                    "event": "agent.decomposer.step_start",
+                    "run_id": payload.run_id,
+                    "payload": {"step_id": step_id, "index": index},
+                },
+            )
             if self._client:
                 try:
                     step = self._generate_step_with_gpt(
@@ -63,15 +105,49 @@ class DecomposerAgent:
                         total=total,
                         fallback=fallback_step,
                     )
+                    LOGGER.info(
+                        "Decomposer agent accepted GPT output for %s",
+                        step_id,
+                        extra={
+                            "event": "agent.decomposer.gpt_success",
+                            "run_id": payload.run_id,
+                            "payload": {"step_id": step_id},
+                        },
+                    )
                 except Exception:  # pragma: no cover - rely on fallback
                     LOGGER.warning(
                         "Decomposer GPT synthesis failed for milestone '%s'; reverting to heuristic prompts.",
                         milestone_title,
                         exc_info=True,
+                        extra={
+                            "event": "agent.decomposer.gpt_failure",
+                            "run_id": payload.run_id,
+                            "payload": {"step_id": step_id},
+                        },
                     )
                     step = fallback_step
+            else:
+                LOGGER.debug(
+                    "Decomposer agent using heuristic prompt for %s",
+                    step_id,
+                    extra={
+                        "event": "agent.decomposer.step_heuristic",
+                        "run_id": payload.run_id,
+                        "payload": {"step_id": step_id},
+                    },
+                )
             steps.append(step)
             previous_summaries.append(self._summarize_step(step))
+        LOGGER.info(
+            "Decomposer agent completed run %s with %s steps.",
+            payload.run_id,
+            len(steps),
+            extra={
+                "event": "agent.decomposer.complete",
+                "run_id": payload.run_id,
+                "payload": {"step_count": len(steps)},
+            },
+        )
         return DecomposerAgentOutput(steps=steps)
 
     def _generate_step_with_gpt(
@@ -113,6 +189,28 @@ class DecomposerAgent:
             f"{project_context}\n"
             '"""\n'
             "Return the JSON structure described in the system instructions. Reference prior milestones when useful and respect the target stack."
+        )
+
+        log_prompt(
+            agent="DecomposerAgent",
+            role="system",
+            prompt=DECOMPOSER_SYSTEM_PROMPT,
+            run_id=payload.run_id,
+            model=self._model,
+            metadata={"milestone": milestone_title, "index": index, "total": total},
+        )
+        log_prompt(
+            agent="DecomposerAgent",
+            role="user",
+            prompt=user_prompt,
+            run_id=payload.run_id,
+            model=self._model,
+            metadata={
+                "milestone": milestone_title,
+                "index": index,
+                "total": total,
+                "previous_summaries": len(previous_summaries),
+            },
         )
 
         response = self._client.chat.completions.create(  # type: ignore[attr-defined]

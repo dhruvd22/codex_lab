@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import itertools
 import json
-import logging
 import os
 import re
 from typing import List, Sequence
 
 from projectplanner.agents.schemas import PlannerAgentInput, PlannerAgentOutput
+from projectplanner.logging_utils import get_logger, log_prompt
 from projectplanner.models import PromptPlan
 
 try:  # pragma: no cover - optional dependency guard
@@ -16,7 +16,7 @@ try:  # pragma: no cover - optional dependency guard
 except Exception:  # pragma: no cover
     OpenAI = None  # type: ignore[assignment]
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = get_logger(__name__)
 
 DEFAULT_PLANNER_MODEL = os.getenv("PROJECTPLANNER_PLANNER_MODEL", "gpt-5")
 MAX_CONTEXT_CHARS = 18000
@@ -48,21 +48,76 @@ class PlannerAgent:
             try:
                 self._client = OpenAI(api_key=api_key)
             except Exception:  # pragma: no cover - initialization failure fallback
-                LOGGER.warning("Failed to initialize OpenAI client for PlannerAgent; heuristics will be used.", exc_info=True)
+                LOGGER.warning(
+                    "Failed to initialize OpenAI client for PlannerAgent; heuristics will be used.",
+                    exc_info=True,
+                    extra={"event": "agent.planner.init_failure"},
+                )
                 self._client = None
+
+        if self._client:
+            LOGGER.info(
+                "Planner agent using OpenAI model %s",
+                self._model,
+                extra={"event": "agent.planner.ready"},
+            )
+        else:
+            LOGGER.info(
+                "Planner agent running in heuristic mode (OpenAI unavailable).",
+                extra={"event": "agent.planner.heuristic_mode"},
+            )
 
     def generate_plan(self, payload: PlannerAgentInput) -> PlannerAgentOutput:
         """Generate a PromptPlan using GPT-5 with deterministic fallback."""
 
+        LOGGER.info(
+            "Planner agent generating plan for run %s",
+            payload.run_id,
+            extra={
+                "event": "agent.planner.start",
+                "run_id": payload.run_id,
+                "payload": {"objective_count": len(payload.objectives)},
+            },
+        )
         heuristic_plan = self._generate_with_heuristics(payload)
+        LOGGER.debug(
+            "Planner agent prepared heuristic baseline",
+            extra={
+                "event": "agent.planner.heuristic_baseline",
+                "run_id": payload.run_id,
+                "payload": {
+                    "goal_count": len(heuristic_plan.goals),
+                    "milestone_count": len(heuristic_plan.milestones),
+                },
+            },
+        )
         if not self._client:
+            LOGGER.info(
+                "Planner agent returning heuristic plan (no OpenAI client).",
+                extra={"event": "agent.planner.heuristic_only", "run_id": payload.run_id},
+            )
             return PlannerAgentOutput(plan=heuristic_plan)
 
         try:
             plan = self._generate_with_gpt(payload, heuristic_plan)
+            LOGGER.info(
+                "Planner agent accepted GPT-generated plan.",
+                extra={
+                    "event": "agent.planner.gpt_success",
+                    "run_id": payload.run_id,
+                    "payload": {
+                        "goal_count": len(plan.goals),
+                        "milestone_count": len(plan.milestones),
+                    },
+                },
+            )
             return PlannerAgentOutput(plan=plan)
         except Exception:  # pragma: no cover - fall back to heuristic result
-            LOGGER.warning("Planner GPT synthesis failed; returning heuristic plan.", exc_info=True)
+            LOGGER.warning(
+                "Planner GPT synthesis failed; returning heuristic plan.",
+                exc_info=True,
+                extra={"event": "agent.planner.gpt_failure", "run_id": payload.run_id},
+            )
             return PlannerAgentOutput(plan=heuristic_plan)
 
     def _generate_with_gpt(self, payload: PlannerAgentInput, fallback: PromptPlan) -> PromptPlan:
@@ -92,6 +147,27 @@ class PlannerAgent:
             f"{context}\n"
             '"""\n'
             "Return JSON with fields context, goals, assumptions, non_goals, risks."
+        )
+
+        log_prompt(
+            agent="PlannerAgent",
+            role="system",
+            prompt=PLANNER_SYSTEM_PROMPT,
+            run_id=payload.run_id,
+            model=self._model,
+            metadata={"style": payload.style},
+        )
+        log_prompt(
+            agent="PlannerAgent",
+            role="user",
+            prompt=user_prompt,
+            run_id=payload.run_id,
+            model=self._model,
+            metadata={
+                "style": payload.style,
+                "objective_count": len(payload.objectives),
+                "chunk_count": len(payload.chunks),
+            },
         )
 
         response = self._client.chat.completions.create(  # type: ignore[attr-defined]

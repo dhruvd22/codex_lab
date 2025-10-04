@@ -89,6 +89,24 @@ export type StepsResponse = {
   steps: PromptStep[];
 };
 
+
+export type LogEntry = {
+  sequence: number;
+  timestamp: string;
+  level: string;
+  logger: string;
+  message: string;
+  run_id?: string | null;
+  event?: string | null;
+  payload?: Record<string, unknown> | null;
+  exception?: string | null;
+};
+
+export type LogsResponse = {
+  logs: LogEntry[];
+  cursor: number;
+};
+
 export type ExportRequest = {
   run_id: string;
   format: "yaml" | "jsonl" | "md";
@@ -256,6 +274,26 @@ export async function updateSteps(runId: string, steps: PromptStep[]): Promise<S
     method: "PUT",
     body: JSON.stringify({ steps }),
   });
+}
+
+export type LogLevelFilter = "DEBUG" | "INFO" | "WARNING" | "ERROR" | "CRITICAL";
+
+export async function fetchLogs(params: {
+  after?: number;
+  limit?: number;
+  level?: LogLevelFilter;
+} = {}): Promise<LogsResponse> {
+  const search = new URLSearchParams();
+  const limit = params.limit ?? 200;
+  search.set("limit", String(limit));
+  if (typeof params.after === "number") {
+    search.set("after", String(params.after));
+  }
+  if (params.level) {
+    search.set("level", params.level.toUpperCase());
+  }
+  const query = search.toString();
+  return http<LogsResponse>(`/api/projectplanner/logs${query ? `?${query}` : ""}`);
 }
 
 

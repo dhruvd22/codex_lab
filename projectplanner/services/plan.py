@@ -17,6 +17,7 @@ from projectplanner.agents.schemas import (
     PlannerAgentInput,
     ReviewerAgentInput,
 )
+from projectplanner.logging_utils import get_logger
 from projectplanner.models import (
     AgentReport,
     ExportMetadata,
@@ -32,6 +33,9 @@ from projectplanner.services.store import ProjectPlannerStore
 PlanningEvent = Tuple[str, Dict[str, Any]]
 
 
+LOGGER = get_logger(__name__)
+
+
 def _serialize_report(report: AgentReport) -> Dict[str, Any]:
     """Convert the reviewer report into a JSON safe payload."""
 
@@ -45,18 +49,44 @@ def _planning_generator(
 ) -> Iterator[PlanningEvent]:
     """Yield planning lifecycle events and return the final plan."""
 
+    LOGGER.info(
+        "Planning workflow initiated for run %s",
+        payload.run_id,
+        extra={
+            "event": "planning.start",
+            "run_id": payload.run_id,
+            "payload": {"style": payload.style},
+        },
+    )
     if not store.run_exists(payload.run_id):
+        LOGGER.warning(
+            "Planning requested for unknown run %s",
+            payload.run_id,
+            extra={"event": "planning.missing_run", "run_id": payload.run_id},
+        )
         raise HTTPException(status_code=404, detail="Run not found. Ingest a document first.")
 
     chunks = store.get_chunks(payload.run_id)
     if not chunks:
+        LOGGER.warning(
+            "Run %s has no chunks available for planning",
+            payload.run_id,
+            extra={"event": "planning.missing_chunks", "run_id": payload.run_id},
+        )
         raise HTTPException(status_code=400, detail="Run has no chunks to plan against.")
 
     text_chunks = [chunk.text for chunk in chunks]
-    yield (
-        "coordinator_started",
-        {"run_id": payload.run_id, "chunk_count": len(text_chunks)},
+    coordinator_started = {"run_id": payload.run_id, "chunk_count": len(text_chunks)}
+    LOGGER.info(
+        "Coordinator stage starting (%s chunks)",
+        len(text_chunks),
+        extra={
+            "event": "planning.coordinator.start",
+            "run_id": payload.run_id,
+            "payload": coordinator_started,
+        },
     )
+    yield ("coordinator_started", coordinator_started)
 
     coordinator_input = CoordinatorAgentInput(
         run_id=payload.run_id,
@@ -71,15 +101,36 @@ def _planning_generator(
         key=lambda objective: objective.order,
     )
     store.upsert_objectives(payload.run_id, objectives)
-    yield (
-        "coordinator_completed",
-        {"run_id": payload.run_id, "objective_count": len(objectives), "objectives": [objective.dict() for objective in objectives]},
+    coordinator_completed = {
+        "run_id": payload.run_id,
+        "objective_count": len(objectives),
+        "objectives": [objective.dict() for objective in objectives],
+    }
+    LOGGER.info(
+        "Coordinator produced %s objectives",
+        len(objectives),
+        extra={
+            "event": "planning.coordinator.complete",
+            "run_id": payload.run_id,
+            "payload": coordinator_completed,
+        },
     )
+    yield ("coordinator_completed", coordinator_completed)
 
-    yield (
-        "planner_started",
-        {"run_id": payload.run_id, "chunk_count": len(text_chunks), "objective_count": len(objectives)},
+    planner_started = {
+        "run_id": payload.run_id,
+        "chunk_count": len(text_chunks),
+        "objective_count": len(objectives),
+    }
+    LOGGER.info(
+        "Planner stage starting",
+        extra={
+            "event": "planning.planner.start",
+            "run_id": payload.run_id,
+            "payload": planner_started,
+        },
     )
+    yield ("planner_started", planner_started)
 
     planner_input = PlannerAgentInput(
         run_id=payload.run_id,
@@ -91,7 +142,16 @@ def _planning_generator(
     planner = PlannerAgent()
     plan_output = planner.generate_plan(planner_input)
     plan = plan_output.plan
-    yield ("planner_completed", {"plan": plan.dict()})
+    planner_completed = {"plan": plan.dict()}
+    LOGGER.info(
+        "Planner completed",
+        extra={
+            "event": "planning.planner.complete",
+            "run_id": payload.run_id,
+            "payload": {"goal_count": len(plan.goals), "milestone_count": len(plan.milestones)},
+        },
+    )
+    yield ("planner_completed", planner_completed)
 
     decomposer_input = DecomposerAgentInput(
         run_id=payload.run_id,
@@ -102,20 +162,37 @@ def _planning_generator(
     decomposer = DecomposerAgent()
     steps_output = decomposer.decompose(decomposer_input)
     steps = steps_output.steps
-    yield ("decomposer_completed", {"steps": [step.dict() for step in steps]})
+    decomposer_completed = {"steps": [step.dict() for step in steps]}
+    LOGGER.info(
+        "Decomposer produced %s steps",
+        len(steps),
+        extra={
+            "event": "planning.decomposer.complete",
+            "run_id": payload.run_id,
+            "payload": {"step_count": len(steps)},
+        },
+    )
+    yield ("decomposer_completed", decomposer_completed)
 
     reviewer_input = ReviewerAgentInput(run_id=payload.run_id, plan=plan, steps=steps)
     reviewer = ReviewerAgent()
     review_output = reviewer.review(reviewer_input)
     reviewed_steps = review_output.steps
     report = review_output.report
-    yield (
-        "reviewer_completed",
-        {
-            "report": _serialize_report(report),
-            "steps": [step.dict() for step in reviewed_steps],
+    reviewer_completed = {
+        "report": _serialize_report(report),
+        "steps": [step.dict() for step in reviewed_steps],
+    }
+    LOGGER.info(
+        "Reviewer completed with overall score %.2f",
+        report.overall_score,
+        extra={
+            "event": "planning.reviewer.complete",
+            "run_id": payload.run_id,
+            "payload": {"overall_score": report.overall_score},
         },
     )
+    yield ("reviewer_completed", reviewer_completed)
 
     store.attach_plan_context(
         payload.run_id,
@@ -125,6 +202,11 @@ def _planning_generator(
     store.upsert_plan(payload.run_id, plan)
     store.upsert_steps(payload.run_id, reviewed_steps)
     store.upsert_report(payload.run_id, report)
+    LOGGER.debug(
+        "Persisted plan artifacts for run %s",
+        payload.run_id,
+        extra={"event": "planning.persisted", "run_id": payload.run_id},
+    )
 
     final_payload: Dict[str, Any] = {
         "run_id": payload.run_id,
@@ -133,6 +215,15 @@ def _planning_generator(
         "report": _serialize_report(report),
         "objectives": [objective.dict() for objective in objectives],
     }
+    LOGGER.info(
+        "Planning workflow complete for run %s",
+        payload.run_id,
+        extra={
+            "event": "planning.complete",
+            "run_id": payload.run_id,
+            "payload": {"step_count": len(reviewed_steps)},
+        },
+    )
     yield ("final_plan", final_payload)
     return PlanResponse(plan=plan, steps=reviewed_steps, report=report, objectives=objectives)
 
@@ -162,11 +253,25 @@ def planning_event_stream(
 
 
 async def export_prompts(payload: ExportRequest, *, store: ProjectPlannerStore) -> ExportResponse:
+    LOGGER.info(
+        "Exporting prompts for run %s",
+        payload.run_id,
+        extra={
+            "event": "planning.export.start",
+            "run_id": payload.run_id,
+            "payload": {"format": payload.format},
+        },
+    )
     plan = store.get_plan(payload.run_id)
     steps = store.get_steps(payload.run_id)
     report = store.get_report(payload.run_id)
 
     if not plan or not steps:
+        LOGGER.warning(
+            "Export requested but plan or steps missing for run %s",
+            payload.run_id,
+            extra={"event": "planning.export.missing", "run_id": payload.run_id},
+        )
         raise HTTPException(status_code=404, detail="Plan or steps not found for run.")
 
     formatter = {
@@ -188,6 +293,16 @@ async def export_prompts(payload: ExportRequest, *, store: ProjectPlannerStore) 
         generated_at=datetime.utcnow(),
     )
     export_response = ExportResponse(metadata=metadata, content=content)
+    LOGGER.info(
+        "Prepared %s export for run %s",
+        payload.format,
+        payload.run_id,
+        extra={
+            "event": "planning.export.complete",
+            "run_id": payload.run_id,
+            "payload": {"filename": filename},
+        },
+    )
     return export_response
 
 
