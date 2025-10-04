@@ -8,6 +8,7 @@ from typing import Dict, Iterable, List, Sequence
 
 from projectplanner.agents.schemas import CoordinatorAgentInput, CoordinatorAgentOutput
 from projectplanner.logging_utils import get_logger, log_prompt
+from projectplanner.agents._openai_helpers import create_chat_completion
 from projectplanner.models import MilestoneObjective
 
 try:  # pragma: no cover - optional dependency guard
@@ -141,14 +142,15 @@ class CoordinatorAgent:
     def _request_objectives(self, user_prompt: str) -> str:
         if not self._client:
             raise RuntimeError("OpenAI client unavailable for coordinator agent.")
-        response = self._client.chat.completions.create(  # type: ignore[attr-defined]
+        response = create_chat_completion(
+            self._client,
             model=self._model,
             messages=[
                 {"role": "system", "content": COORDINATOR_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.2,
-            max_completion_tokens=900,
+            max_tokens=900,
         )
         if not response.choices:
             raise ValueError("Coordinator model returned no choices.")
@@ -369,3 +371,4 @@ class CoordinatorAgent:
                 )
             )
         return objectives
+

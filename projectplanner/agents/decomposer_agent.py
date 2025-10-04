@@ -7,6 +7,7 @@ import re
 from typing import List, Optional, Sequence
 
 from projectplanner.agents.schemas import DecomposerAgentInput, DecomposerAgentOutput
+from projectplanner.agents._openai_helpers import create_chat_completion
 from projectplanner.logging_utils import get_logger, log_prompt
 from projectplanner.models import MilestoneObjective, PromptStep
 
@@ -213,14 +214,15 @@ class DecomposerAgent:
             },
         )
 
-        response = self._client.chat.completions.create(  # type: ignore[attr-defined]
+        response = create_chat_completion(
+            self._client,
             model=self._model,
             messages=[
                 {"role": "system", "content": DECOMPOSER_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.25,
-            max_completion_tokens=1100,
+            max_tokens=1100,
         )
         if not response.choices:
             raise ValueError("Decomposer model returned no choices.")
