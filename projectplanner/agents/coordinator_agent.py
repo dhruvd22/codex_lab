@@ -25,15 +25,9 @@ LOGGER = get_logger(__name__)
 
 DEFAULT_COORDINATOR_MODEL = os.getenv("PROJECTPLANNER_COORDINATOR_MODEL", "gpt-5")
 MAX_CONTEXT_CHARS = 18000
-_DEFAULT_COORDINATOR_COMPLETION_TOKEN_ATTEMPTS = (900, 1500, 2200)
-
-
 
 def _resolve_coordinator_completion_token_attempts() -> tuple[int, ...]:
-    candidates = list(_DEFAULT_COORDINATOR_COMPLETION_TOKEN_ATTEMPTS)
-    candidates.append(MAX_COMPLETION_TOKENS)
-    normalized = sorted({value for value in candidates if value and value > 0})
-    return tuple(normalized)
+    return (MAX_COMPLETION_TOKENS,)
 
 
 COORDINATOR_COMPLETION_TOKEN_ATTEMPTS = _resolve_coordinator_completion_token_attempts()
