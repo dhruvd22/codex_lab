@@ -144,8 +144,10 @@ def build_observability_snapshot(
 
     manager = get_log_manager()
     session_started_at = manager.session_started_at
-    runtime_logs = manager.get_logs(limit=limit, log_type="runtime", start=start, end=end)
-    prompt_logs = manager.get_logs(limit=limit, log_type="prompts", start=start, end=end)
+    effective_limit = limit if limit is not None else MAX_LOGS_PER_STREAM
+    call_limit = max(1, max_calls)
+    runtime_logs = manager.get_logs(limit=effective_limit, log_type="runtime", start=start, end=end)
+    prompt_logs = manager.get_logs(limit=effective_limit, log_type="prompts", start=start, end=end)
 
     records: List[Tuple[datetime, str, Dict[str, Any]]] = []
     for entry in runtime_logs:
@@ -197,8 +199,8 @@ def build_observability_snapshot(
         )
 
     calls.sort(key=lambda call: call.timestamp, reverse=True)
-    if len(calls) > max_calls:
-        calls = calls[:max_calls]
+    if len(calls) > call_limit:
+        calls = calls[:call_limit]
 
     nodes: List[ObservabilityNode] = []
     for definition in MODULE_DEFINITIONS:

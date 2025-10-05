@@ -312,17 +312,18 @@ async def export_observability(
 ) -> StreamingResponse:
     start_dt = _parse_query_datetime(start)
     end_dt = _parse_query_datetime(end)
+    call_limit = calls if calls is not None else 500
     snapshot = build_observability_snapshot(
         limit=limit,
-        max_calls=calls or 500,
+        max_calls=max(1, call_limit),
         start=start_dt,
         end=end_dt,
     )
-    payload = json.dumps(snapshot.model_dump(), ensure_ascii=False, indent=2)
+    payload = snapshot.model_dump_json(indent=2)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     filename = f"projectplanner-observability-{timestamp}.json"
     headers = {"Content-Disposition": f"attachment; filename={filename}"}
-    return StreamingResponse(iter([payload]), media_type="application/json", headers=headers)
+    return StreamingResponse(iter([payload.encode("utf-8")]), media_type="application/json", headers=headers)
 
 
 @router.post("/export")
