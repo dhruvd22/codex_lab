@@ -168,6 +168,7 @@ class LogEntry(BaseModel):
     level: str = Field(..., description="Severity level name.")
     logger: str = Field(..., description="Logger name that emitted the record.")
     message: str = Field(..., description="Primary log message.")
+    type: Literal["runtime", "prompts"] = Field("runtime", description="Log stream category.")
     run_id: Optional[str] = Field(None, description="Associated run identifier when available.")
     event: Optional[str] = Field(None, description="Categorical event identifier supplied via extra context.")
     payload: Optional[Dict[str, Any]] = Field(None, description="Structured payload attached to the record.")

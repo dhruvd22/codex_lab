@@ -8,7 +8,11 @@ import re
 from typing import List, Sequence
 
 from projectplanner.agents.schemas import PlannerAgentInput, PlannerAgentOutput
-from projectplanner.agents._openai_helpers import create_chat_completion, extract_message_content
+from projectplanner.agents._openai_helpers import (
+    create_chat_completion,
+    extract_choice_metadata,
+    extract_message_content,
+)
 from projectplanner.logging_utils import get_logger, log_prompt
 from projectplanner.models import PromptPlan
 
@@ -113,11 +117,15 @@ class PlannerAgent:
                 },
             )
             return PlannerAgentOutput(plan=plan)
-        except Exception:  # pragma: no cover - fall back to heuristic result
+        except Exception as error:  # pragma: no cover - fall back to heuristic result
             LOGGER.warning(
-                "Planner GPT synthesis failed; returning heuristic plan.",
-                exc_info=True,
-                extra={"event": "agent.planner.gpt_failure", "run_id": payload.run_id},
+                "Planner GPT synthesis failed; returning heuristic plan. (%s)",
+                error,
+                extra={
+                    "event": "agent.planner.gpt_failure",
+                    "run_id": payload.run_id,
+                    "payload": {"error": str(error), "error_type": type(error).__name__},
+                },
             )
             return PlannerAgentOutput(plan=heuristic_plan)
 
@@ -181,12 +189,52 @@ class PlannerAgent:
             temperature=0.2,
             max_tokens=900,
         )
+        response_metadata = extract_choice_metadata(response)
+        response_metadata.update(
+            {
+                "style": payload.style,
+                "objective_count": len(payload.objectives),
+                "chunk_count": len(payload.chunks),
+            }
+        )
         if not response.choices:
+            response_metadata["reason"] = "no_choices"
+            log_prompt(
+                agent="PlannerAgent",
+                role="assistant",
+                prompt="",
+                run_id=payload.run_id,
+                stage="response",
+                model=self._model,
+                metadata=response_metadata,
+            )
             raise ValueError("Planner model returned no choices.")
         message = response.choices[0].message
         content = extract_message_content(message)
+        response_metadata["has_content"] = bool(content)
+        if message is not None:
+            response_metadata.setdefault("message", message)
+        log_prompt(
+            agent="PlannerAgent",
+            role="assistant",
+            prompt=content or "",
+            run_id=payload.run_id,
+            stage="response",
+            model=self._model,
+            metadata=response_metadata,
+        )
         if not content:
-            raise ValueError("Planner model returned empty content.")
+            details = []
+            finish_reason = response_metadata.get("finish_reason")
+            if finish_reason:
+                details.append(f"finish_reason={finish_reason}")
+            if response_metadata.get("refusal"):
+                details.append("refusal")
+            response_id = response_metadata.get("response_id")
+            if response_id:
+                details.append(f"id={response_id}")
+            suffix = f" ({', '.join(details)})" if details else ""
+            raise ValueError(f"Planner model returned empty content{suffix}.")
 
         data = self._parse_plan_json(content)
         milestones = self._milestone_titles(payload) or fallback.milestones

@@ -8,7 +8,11 @@ from typing import Dict, Iterable, List, Sequence
 
 from projectplanner.agents.schemas import CoordinatorAgentInput, CoordinatorAgentOutput
 from projectplanner.logging_utils import get_logger, log_prompt
-from projectplanner.agents._openai_helpers import create_chat_completion, extract_message_content
+from projectplanner.agents._openai_helpers import (
+    create_chat_completion,
+    extract_choice_metadata,
+    extract_message_content,
+)
 from projectplanner.models import MilestoneObjective
 
 try:  # pragma: no cover - optional dependency guard
@@ -95,7 +99,7 @@ class CoordinatorAgent:
                 metadata={"style": payload.style, "chunk_count": len(payload.chunks)},
             )
             try:
-                raw = self._request_objectives(user_prompt)
+                raw = self._request_objectives(payload, user_prompt)
                 parsed = self._parse_objectives(raw)
                 if parsed:
                     objectives = parsed
@@ -109,11 +113,15 @@ class CoordinatorAgent:
                             "payload": {"count": len(objectives)},
                         },
                     )
-            except Exception:  # pragma: no cover - rely on fallback below
+            except Exception as error:  # pragma: no cover - rely on fallback below
                 LOGGER.warning(
-                    "Coordinator GPT synthesis failed; reverting to heuristic objectives.",
-                    exc_info=True,
-                    extra={"event": "agent.coordinator.gpt_failure", "run_id": payload.run_id},
+                    "Coordinator GPT synthesis failed; reverting to heuristic objectives. (%s)",
+                    error,
+                    extra={
+                        "event": "agent.coordinator.gpt_failure",
+                        "run_id": payload.run_id,
+                        "payload": {"error": str(error), "error_type": type(error).__name__},
+                    },
                 )
                 objectives = []
         if not objectives:
@@ -139,7 +147,7 @@ class CoordinatorAgent:
         )
         return CoordinatorAgentOutput(objectives=objectives)
 
-    def _request_objectives(self, user_prompt: str) -> str:
+    def _request_objectives(self, payload: CoordinatorAgentInput, user_prompt: str) -> str:
         if not self._client:
             raise RuntimeError("OpenAI client unavailable for coordinator agent.")
         response = create_chat_completion(
@@ -152,12 +160,51 @@ class CoordinatorAgent:
             temperature=0.2,
             max_tokens=900,
         )
+        response_metadata = extract_choice_metadata(response)
+        response_metadata.update(
+            {
+                "style": payload.style,
+                "chunk_count": len(payload.chunks),
+            }
+        )
         if not response.choices:
+            response_metadata["reason"] = "no_choices"
+            log_prompt(
+                agent="CoordinatorAgent",
+                role="assistant",
+                prompt="",
+                run_id=payload.run_id,
+                stage="response",
+                model=self._model,
+                metadata=response_metadata,
+            )
             raise ValueError("Coordinator model returned no choices.")
         message = response.choices[0].message
         content = extract_message_content(message)
+        response_metadata["has_content"] = bool(content)
+        if message is not None:
+            response_metadata.setdefault("message", message)
+        log_prompt(
+            agent="CoordinatorAgent",
+            role="assistant",
+            prompt=content or "",
+            run_id=payload.run_id,
+            stage="response",
+            model=self._model,
+            metadata=response_metadata,
+        )
         if not content:
-            raise ValueError("Coordinator model returned empty content.")
+            details = []
+            finish_reason = response_metadata.get("finish_reason")
+            if finish_reason:
+                details.append(f"finish_reason={finish_reason}")
+            if response_metadata.get("refusal"):
+                details.append("refusal")
+            response_id = response_metadata.get("response_id")
+            if response_id:
+                details.append(f"id={response_id}")
+            suffix = f" ({', '.join(details)})" if details else ""
+            raise ValueError(f"Coordinator model returned empty content{suffix}.")
         return content
 
     def _build_user_prompt(self, payload: CoordinatorAgentInput, context: str) -> str:

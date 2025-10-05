@@ -358,16 +358,30 @@ def _embed_text(text: str, run_id: Optional[str] = None, index: Optional[int] = 
             metadata={"index": index},
         )
         response = client.embeddings.create(input=[text], model="text-embedding-3-small")
-        return list(response.data[0].embedding)
-    except Exception:
+        vector = list(response.data[0].embedding)
+        metadata = {"index": index, "vector_length": len(vector)}
+        response_id = getattr(response, "id", None)
+        if response_id:
+            metadata["response_id"] = response_id
+        log_prompt(
+            agent="EmbeddingService",
+            role="embedding",
+            prompt="[embedding vector]",
+            run_id=run_id,
+            stage="response",
+            model="text-embedding-3-small",
+            metadata=metadata,
+        )
+        return vector
+    except Exception as error:
         LOGGER.warning(
-            "Embedding request failed for chunk %s",
+            "Embedding request failed for chunk %s (%s)",
             index,
-            exc_info=True,
+            error,
             extra={
                 "event": "ingest.embedding.failure",
                 "run_id": run_id,
-                "payload": {"index": index},
+                "payload": {"index": index, "error": str(error), "error_type": type(error).__name__},
             },
         )
         return None

@@ -106,6 +106,11 @@ class InMemoryLogHandler(logging.Handler):
             "exception": None,
             "thread": record.threadName,
         }
+        raw_type = getattr(record, "log_type", "runtime")
+        if isinstance(raw_type, str):
+            entry["type"] = raw_type.lower()
+        else:
+            entry["type"] = str(raw_type)
         if record.exc_info:
             entry["exception"] = self._formatter.formatException(record.exc_info)
         elif getattr(record, "exc_text", None):
@@ -122,13 +127,17 @@ class InMemoryLogHandler(logging.Handler):
         after: Optional[int] = None,
         limit: Optional[int] = None,
         levelno: Optional[int] = None,
+        log_type: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         with self._lock:
             snapshot = list(self._buffer)
+        normalized_type = log_type.lower() if isinstance(log_type, str) else None
         if after is not None:
             snapshot = [item for item in snapshot if item["sequence"] > after]
         if levelno is not None:
             snapshot = [item for item in snapshot if item["levelno"] >= levelno]
+        if normalized_type is not None:
+            snapshot = [item for item in snapshot if item.get("type", "runtime") == normalized_type]
         if limit is not None:
             snapshot = snapshot[-limit:]
         return snapshot
@@ -187,9 +196,13 @@ class LogManager:
         after: Optional[int] = None,
         limit: Optional[int] = None,
         level: str | int | None = None,
+        log_type: str | None = None,
     ) -> list[dict[str, Any]]:
         levelno = _coerce_level(level)
-        records = self.handler.records(after=after, limit=limit, levelno=levelno)
+        normalized_type = log_type.lower() if isinstance(log_type, str) else None
+        records = self.handler.records(
+            after=after, limit=limit, levelno=levelno, log_type=normalized_type
+        )
         return [
             {
                 "sequence": item["sequence"],
@@ -201,6 +214,7 @@ class LogManager:
                 "event": item.get("event"),
                 "payload": item.get("payload"),
                 "exception": item.get("exception"),
+                "type": item.get("type", "runtime"),
             }
             for item in records
         ]
@@ -425,13 +439,15 @@ def log_prompt(
 ) -> None:
     ensure_configured()
     target = logger or logging.getLogger(f"{agent}.prompt")
+    normalized_stage = stage or "request"
     preview = _preview_text(prompt, _PROMPT_PREVIEW_LIMIT)
     payload: MutableMapping[str, Any] = {
         "agent": agent,
         "role": role,
-        "stage": stage,
+        "stage": normalized_stage,
         "chars": len(prompt),
         "preview": preview,
+        "content": prompt,
     }
     if model:
         payload["model"] = model
@@ -439,13 +455,14 @@ def log_prompt(
         payload["metadata"] = _sanitize(metadata)
     target.info(
         "%s prompt for %s (%d chars)",
-        stage.capitalize(),
+        normalized_stage.capitalize(),
         agent,
         len(prompt),
         extra={
             "run_id": run_id,
-            "event": f"prompt.{stage}",
+            "event": f"prompt.{normalized_stage}",
             "payload": payload,
+            "log_type": "prompts",
         },
     )
 

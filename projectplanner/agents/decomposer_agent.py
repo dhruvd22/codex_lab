@@ -7,7 +7,11 @@ import re
 from typing import List, Optional, Sequence
 
 from projectplanner.agents.schemas import DecomposerAgentInput, DecomposerAgentOutput
-from projectplanner.agents._openai_helpers import create_chat_completion, extract_message_content
+from projectplanner.agents._openai_helpers import (
+    create_chat_completion,
+    extract_choice_metadata,
+    extract_message_content,
+)
 from projectplanner.logging_utils import get_logger, log_prompt
 from projectplanner.models import MilestoneObjective, PromptStep
 
@@ -115,15 +119,15 @@ class DecomposerAgent:
                             "payload": {"step_id": step_id},
                         },
                     )
-                except Exception:  # pragma: no cover - rely on fallback
+                except Exception as error:  # pragma: no cover - rely on fallback
                     LOGGER.warning(
-                        "Decomposer GPT synthesis failed for milestone '%s'; reverting to heuristic prompts.",
+                        "Decomposer GPT synthesis failed for milestone '%s'; reverting to heuristic prompts. (%s)",
                         milestone_title,
-                        exc_info=True,
+                        error,
                         extra={
                             "event": "agent.decomposer.gpt_failure",
                             "run_id": payload.run_id,
-                            "payload": {"step_id": step_id},
+                            "payload": {"step_id": step_id, "error": str(error), "error_type": type(error).__name__},
                         },
                     )
                     step = fallback_step
@@ -224,12 +228,52 @@ class DecomposerAgent:
             temperature=0.25,
             max_tokens=1100,
         )
+        response_metadata = extract_choice_metadata(response)
+        response_metadata.update(
+            {
+                "milestone": milestone_title,
+                "index": index,
+                "total": total,
+            }
+        )
         if not response.choices:
+            response_metadata["reason"] = "no_choices"
+            log_prompt(
+                agent="DecomposerAgent",
+                role="assistant",
+                prompt="",
+                run_id=payload.run_id,
+                stage="response",
+                model=self._model,
+                metadata=response_metadata,
+            )
             raise ValueError("Decomposer model returned no choices.")
         message = response.choices[0].message
         content = extract_message_content(message)
+        response_metadata["has_content"] = bool(content)
+        if message is not None:
+            response_metadata.setdefault("message", message)
+        log_prompt(
+            agent="DecomposerAgent",
+            role="assistant",
+            prompt=content or "",
+            run_id=payload.run_id,
+            stage="response",
+            model=self._model,
+            metadata=response_metadata,
+        )
         if not content:
-            raise ValueError("Decomposer model returned empty content.")
+            details = []
+            finish_reason = response_metadata.get("finish_reason")
+            if finish_reason:
+                details.append(f"finish_reason={finish_reason}")
+            if response_metadata.get("refusal"):
+                details.append("refusal")
+            response_id = response_metadata.get("response_id")
+            if response_id:
+                details.append(f"id={response_id}")
+            suffix = f" ({', '.join(details)})" if details else ""
+            raise ValueError(f"Decomposer model returned empty content{suffix}.")
 
         data = self._parse_step_json(content)
         return PromptStep(

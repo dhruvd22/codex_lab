@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { fetchLogs, LogEntry, LogLevelFilter } from "@/lib/api";
+import { fetchLogs, LogEntry, LogLevelFilter, type LogType } from "@/lib/api";
 
 const LEVEL_OPTIONS: Array<LogLevelFilter | "ALL"> = ["ALL", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"];
+const SOURCE_OPTIONS: Array<{ value: LogType; label: string }> = [
+  { value: "runtime", label: "Runtime" },
+  { value: "prompts", label: "Prompts" },
+];
 const AUTO_REFRESH_INTERVAL_MS = 5000;
 const MAX_ENTRIES = 500;
 
@@ -41,6 +45,7 @@ export function LoggingPanel(): JSX.Element {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [cursor, setCursor] = useState<number | null>(null);
   const cursorRef = useRef<number | null>(null);
+  const [source, setSource] = useState<LogType>("runtime");
   const [level, setLevel] = useState<LogLevelFilter | "ALL">("INFO");
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
@@ -57,6 +62,7 @@ export function LoggingPanel(): JSX.Element {
         const response = await fetchLogs({
           after: shouldAppend ? cursorRef.current ?? undefined : undefined,
           level: effectiveLevel,
+          type: source,
         });
         cursorRef.current = response.cursor;
         setCursor(response.cursor);
@@ -80,11 +86,13 @@ export function LoggingPanel(): JSX.Element {
         }
       }
     },
-    [level],
+    [level, source],
   );
 
   useEffect(() => {
     cursorRef.current = null;
+    setCursor(null);
+    setLogs([]);
     void loadLogs("refresh");
   }, [loadLogs]);
 
@@ -107,23 +115,44 @@ export function LoggingPanel(): JSX.Element {
   return (
     <section className="space-y-4">
       <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm">
-          <label htmlFor="log-level" className="text-slate-300">
-            Level
-          </label>
-          <select
-            id="log-level"
-            value={level}
-            onChange={(event) => setLevel(event.target.value as LogLevelFilter | "ALL")}
-            className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100"
-          >
-            {LEVEL_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {option === "ALL" ? "All" : option}
-              </option>
-            ))}
-          </select>
-          <span className="text-slate-500">{renderedRows.length} records</span>
+        <div className="flex flex-wrap items-center gap-4 text-sm">
+          <div className="flex items-center gap-2">
+            <label htmlFor="log-source" className="text-slate-300">
+              Source
+            </label>
+            <select
+              id="log-source"
+              value={source}
+              onChange={(event) => setSource(event.target.value as LogType)}
+              className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100"
+            >
+              {SOURCE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label htmlFor="log-level" className="text-slate-300">
+              Level
+            </label>
+            <select
+              id="log-level"
+              value={level}
+              onChange={(event) => setLevel(event.target.value as LogLevelFilter | "ALL")}
+              className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100"
+            >
+              {LEVEL_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option === "ALL" ? "All" : option}
+                </option>
+              ))}
+            </select>
+          </div>
+          <span className="text-slate-500">
+            {renderedRows.length} {source === "prompts" ? "prompt entries" : "records"}
+          </span>
         </div>
         <div className="flex items-center gap-3 text-sm">
           <label className="flex items-center gap-2 text-slate-300">

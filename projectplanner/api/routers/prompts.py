@@ -135,19 +135,27 @@ async def list_logs(
         pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$",
         description="Minimum severity level to include.",
     ),
+    log_type: str = Query(
+        "runtime",
+        alias="type",
+        pattern="^(?i)(runtime|prompts)$",
+        description="Log stream to return (runtime or prompts).",
+    ),
 ) -> LogsResponse:
-    """Expose captured runtime logs for debugging and observability."""
+    """Expose captured logs for debugging and observability."""
 
     level_filter = level.upper() if level else None
     manager = get_log_manager()
-    logs = manager.get_logs(after=after, limit=limit, level=level_filter)
+    normalized_type = log_type.lower() if log_type else "runtime"
+    logs = manager.get_logs(after=after, limit=limit, level=level_filter, log_type=normalized_type)
     cursor = manager.latest_cursor()
     LOGGER.debug(
-        "Served %s log records (after=%s, limit=%s, level=%s)",
+        "Served %s log records (after=%s, limit=%s, level=%s, type=%s)",
         len(logs),
         after,
         limit,
         level_filter,
+        normalized_type,
     )
     return LogsResponse(logs=logs, cursor=cursor)
 

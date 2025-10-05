@@ -57,6 +57,61 @@ def extract_message_content(message: Any) -> str:
         return normalized.strip()
     return ""
 
+def extract_choice_metadata(response: Any) -> Dict[str, Any]:
+    """Collect useful metadata from the first choice of a completion response."""
+
+    metadata: Dict[str, Any] = {}
+    choices = getattr(response, "choices", None)
+    if choices is None and isinstance(response, Mapping):
+        choices = response.get("choices")
+    choice = None
+    if isinstance(choices, Sequence) and choices:
+        choice = choices[0]
+    if choice is not None:
+        finish_reason = getattr(choice, "finish_reason", None)
+        if finish_reason is None and isinstance(choice, Mapping):
+            finish_reason = choice.get("finish_reason")
+        if finish_reason is not None:
+            metadata["finish_reason"] = finish_reason
+        message = getattr(choice, "message", None)
+        if message is None and isinstance(choice, Mapping):
+            message = choice.get("message")
+        if message is not None:
+            refusal = getattr(message, "refusal", None)
+            if refusal is None and isinstance(message, Mapping):
+                refusal = message.get("refusal")
+            if refusal:
+                metadata["refusal"] = refusal
+            role = getattr(message, "role", None)
+            if role is None and isinstance(message, Mapping):
+                role = message.get("role")
+            if role:
+                metadata.setdefault("role", role)
+    usage = getattr(response, "usage", None)
+    if usage is None and isinstance(response, Mapping):
+        usage = response.get("usage")
+    if usage:
+        usage_dict: Dict[str, Any] = {}
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            value = getattr(usage, key, None)
+            if value is None and isinstance(usage, Mapping):
+                value = usage.get(key)
+            if value is not None:
+                usage_dict[key] = value
+        if usage_dict:
+            metadata["usage"] = usage_dict
+    response_id = getattr(response, "id", None)
+    if response_id is None and isinstance(response, Mapping):
+        response_id = response.get("id")
+    if response_id:
+        metadata["response_id"] = response_id
+    model = getattr(response, "model", None)
+    if model is None and isinstance(response, Mapping):
+        model = response.get("model")
+    if model:
+        metadata.setdefault("model", model)
+    return metadata
+
 def create_chat_completion(
     client: Any,
     *,

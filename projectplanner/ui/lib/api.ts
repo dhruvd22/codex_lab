@@ -90,12 +90,15 @@ export type StepsResponse = {
 };
 
 
+export type LogType = "runtime" | "prompts";
+
 export type LogEntry = {
   sequence: number;
   timestamp: string;
   level: string;
   logger: string;
   message: string;
+  type: LogType;
   run_id?: string | null;
   event?: string | null;
   payload?: Record<string, unknown> | null;
@@ -282,6 +285,7 @@ export async function fetchLogs(params: {
   after?: number;
   limit?: number;
   level?: LogLevelFilter;
+  type?: LogType;
 } = {}): Promise<LogsResponse> {
   const search = new URLSearchParams();
   const limit = params.limit ?? 200;
@@ -292,6 +296,8 @@ export async function fetchLogs(params: {
   if (params.level) {
     search.set("level", params.level.toUpperCase());
   }
+  const logType = params.type ?? "runtime";
+  search.set("type", logType);
   const query = search.toString();
   return http<LogsResponse>(`/api/projectplanner/logs${query ? `?${query}` : ""}`);
 }
