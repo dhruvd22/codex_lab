@@ -134,13 +134,17 @@ EDGE_DEFINITIONS: Sequence[Tuple[str, str, Optional[str]]] = (
 
 
 def build_observability_snapshot(
-    *, limit: int = MAX_LOGS_PER_STREAM, max_calls: int = MAX_CALLS
+    *,
+    limit: Optional[int] = None,
+    max_calls: int = MAX_CALLS,
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
 ) -> ObservabilityResponse:
     """Assemble a near-real-time snapshot for the observability dashboard."""
 
     manager = get_log_manager()
-    runtime_logs = manager.get_logs(limit=limit, log_type="runtime")
-    prompt_logs = manager.get_logs(limit=limit, log_type="prompts")
+    runtime_logs = manager.get_logs(limit=limit, log_type="runtime", start=start, end=end)
+    prompt_logs = manager.get_logs(limit=limit, log_type="prompts", start=start, end=end)
 
     records: List[Tuple[datetime, str, Dict[str, Any]]] = []
     for entry in runtime_logs:

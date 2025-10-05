@@ -134,6 +134,8 @@ def create_chat_completion(
         raise RuntimeError("OpenAI client is unavailable.")
 
     attempts = (
+        {"max_output_tokens": max_tokens},
+        {"extra_body": {"max_output_tokens": max_tokens}},
         {"max_completion_tokens": max_tokens},
         {"extra_body": {"max_completion_tokens": max_tokens}},
         {"max_tokens": max_tokens},
@@ -168,6 +170,12 @@ def create_chat_completion(
                 if (
                     "use 'max_completion_tokens' instead" in lowered
                     and "max_tokens" in extra
+                ):
+                    last_error = exc
+                    continue
+                if (
+                    "use 'max_output_tokens'" in lowered
+                    and ("max_completion_tokens" in extra or "extra_body" in extra)
                 ):
                     last_error = exc
                     continue

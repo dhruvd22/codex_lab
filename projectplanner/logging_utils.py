@@ -74,6 +74,35 @@ def _preview_text(text: str, limit: int) -> str:
     return f"{text[:limit]}... (+{remainder} chars)"
 
 
+def _coerce_datetime(value: Any) -> Optional[datetime]:
+    """Normalize various datetime inputs into aware UTC datetimes."""
+
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        normalized = candidate.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    return None
+
+
 class InMemoryLogHandler(logging.Handler):
     """Logging handler that keeps a bounded in-memory buffer."""
 
@@ -128,6 +157,8 @@ class InMemoryLogHandler(logging.Handler):
         limit: Optional[int] = None,
         levelno: Optional[int] = None,
         log_type: Optional[str] = None,
+        start_time: Optional[float] = None,
+        end_time: Optional[float] = None,
     ) -> list[dict[str, Any]]:
         with self._lock:
             snapshot = list(self._buffer)
@@ -138,6 +169,10 @@ class InMemoryLogHandler(logging.Handler):
             snapshot = [item for item in snapshot if item["levelno"] >= levelno]
         if normalized_type is not None:
             snapshot = [item for item in snapshot if item.get("type", "runtime") == normalized_type]
+        if start_time is not None:
+            snapshot = [item for item in snapshot if item["created"] >= start_time]
+        if end_time is not None:
+            snapshot = [item for item in snapshot if item["created"] <= end_time]
         if limit is not None:
             snapshot = snapshot[-limit:]
         return snapshot
@@ -197,11 +232,22 @@ class LogManager:
         limit: Optional[int] = None,
         level: str | int | None = None,
         log_type: str | None = None,
+        start: datetime | str | float | None = None,
+        end: datetime | str | float | None = None,
     ) -> list[dict[str, Any]]:
         levelno = _coerce_level(level)
         normalized_type = log_type.lower() if isinstance(log_type, str) else None
+        start_dt = _coerce_datetime(start)
+        end_dt = _coerce_datetime(end)
+        start_ts = start_dt.timestamp() if start_dt else None
+        end_ts = end_dt.timestamp() if end_dt else None
         records = self.handler.records(
-            after=after, limit=limit, levelno=levelno, log_type=normalized_type
+            after=after,
+            limit=limit,
+            levelno=levelno,
+            log_type=normalized_type,
+            start_time=start_ts,
+            end_time=end_ts,
         )
         return [
             {

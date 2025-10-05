@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  downloadObservabilitySnapshot,
   fetchObservabilitySnapshot,
   ObservabilityCall,
   ObservabilityNode,
@@ -48,8 +49,34 @@ const LEVEL_COLORS: Record<string, string> = {
   CRITICAL: "text-rose-400",
 };
 
-const CALL_LIMIT = 40;
+type TimeRangePreset = "all" | "15m" | "1h" | "24h" | "7d";
+
+const TIME_RANGE_OPTIONS: Array<{ value: TimeRangePreset; label: string }> = [
+  { value: "all", label: "All time" },
+  { value: "15m", label: "Last 15 min" },
+  { value: "1h", label: "Last hour" },
+  { value: "24h", label: "Last 24 hours" },
+  { value: "7d", label: "Last 7 days" },
+];
+
+const CALL_LIMIT = 120;
 const REFRESH_INTERVAL_MS = 10000;
+
+function resolveTimeWindow(range: TimeRangePreset): { start?: string; end?: string } {
+  if (range === "all") {
+    return {};
+  }
+  const now = new Date();
+  const end = now.toISOString();
+  const offsets: Record<Exclude<TimeRangePreset, "all">, number> = {
+    "15m": 15 * 60 * 1000,
+    "1h": 60 * 60 * 1000,
+    "24h": 24 * 60 * 60 * 1000,
+    "7d": 7 * 24 * 60 * 60 * 1000,
+  };
+  const startMs = now.getTime() - offsets[range as Exclude<TimeRangePreset, "all">];
+  return { start: new Date(startMs).toISOString(), end };
+}
 
 export function ObservabilityDashboard(): JSX.Element {
   const [snapshot, setSnapshot] = useState<ObservabilitySnapshot | null>(null);
@@ -57,11 +84,18 @@ export function ObservabilityDashboard(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [selectedModule, setSelectedModule] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [timeRange, setTimeRange] = useState<TimeRangePreset>("all");
 
   const loadSnapshot = useCallback(async () => {
     setLoading(true);
+    const window = resolveTimeWindow(timeRange);
     try {
-      const data = await fetchObservabilitySnapshot();
+      const data = await fetchObservabilitySnapshot({
+        calls: CALL_LIMIT,
+        start: window.start,
+        end: window.end,
+      });
       setSnapshot(data);
       setError(null);
       setSelectedModule((current) => {
@@ -75,7 +109,7 @@ export function ObservabilityDashboard(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [timeRange]);
 
   useEffect(() => {
     void loadSnapshot();
@@ -148,6 +182,32 @@ export function ObservabilityDashboard(): JSX.Element {
 
   const lastGenerated = snapshot ? formatDateTime(snapshot.generated_at) : null;
 
+  const handleDownload = useCallback(async () => {
+    const window = resolveTimeWindow(timeRange);
+    setIsDownloading(true);
+    try {
+      const blob = await downloadObservabilitySnapshot({
+        calls: CALL_LIMIT,
+        start: window.start,
+        end: window.end,
+      });
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const filename = `projectplanner-observability-${timestamp}.json`;
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setIsDownloading(false);
+    }
+  }, [timeRange]);
+
   return (
     <section className="space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -156,6 +216,21 @@ export function ObservabilityDashboard(): JSX.Element {
           <p className="text-sm text-slate-400">Track workflow components, latency, and recent module activity.</p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3 text-xs text-slate-400">
+          <div className="flex items-center gap-2">
+            <label htmlFor="observability-window">Window</label>
+            <select
+              id="observability-window"
+              value={timeRange}
+              onChange={(event) => setTimeRange(event.target.value as TimeRangePreset)}
+              className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100"
+            >
+              {TIME_RANGE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
@@ -171,6 +246,14 @@ export function ObservabilityDashboard(): JSX.Element {
               <span className="ml-1 font-mono text-slate-300">{lastGenerated}</span>
             </span>
           )}
+          <button
+            type="button"
+            onClick={() => void handleDownload()}
+            disabled={isDownloading}
+            className="rounded border border-slate-700 bg-slate-900 px-3 py-1 text-xs font-medium text-slate-200 transition hover:border-emerald-500 hover:text-emerald-300 disabled:opacity-60 disabled:hover:border-slate-700"
+          >
+            {isDownloading ? "Preparing…" : "Download"}
+          </button>
           <button
             type="button"
             onClick={() => void loadSnapshot()}

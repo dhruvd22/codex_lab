@@ -1,14 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { fetchLogs, LogEntry, LogLevelFilter, type LogType } from "@/lib/api";
+import { downloadLogs, fetchLogs, LogEntry, LogLevelFilter, type LogType } from "@/lib/api";
+
+type TimeRangePreset = "all" | "15m" | "1h" | "24h" | "7d";
 
 const LEVEL_OPTIONS: Array<LogLevelFilter | "ALL"> = ["ALL", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"];
 const SOURCE_OPTIONS: Array<{ value: LogType; label: string }> = [
   { value: "runtime", label: "Runtime" },
   { value: "prompts", label: "Prompts" },
 ];
+const TIME_RANGE_OPTIONS: Array<{ value: TimeRangePreset; label: string }> = [
+  { value: "all", label: "All time" },
+  { value: "15m", label: "Last 15 min" },
+  { value: "1h", label: "Last hour" },
+  { value: "24h", label: "Last 24 hours" },
+  { value: "7d", label: "Last 7 days" },
+];
 const AUTO_REFRESH_INTERVAL_MS = 5000;
-const MAX_ENTRIES = 500;
+const MAX_ENTRIES = 2000;
 
 function formatTimestamp(value: string): string {
   const date = new Date(value);
@@ -41,20 +50,60 @@ function serializeDetails(entry: LogEntry): string | null {
   return blocks.length ? blocks.join("\n\n") : null;
 }
 
+function resolveTimeWindow(range: TimeRangePreset): { start?: string; end?: string } {
+  if (range === "all") {
+    return {};
+  }
+  const now = new Date();
+  const end = now.toISOString();
+  const offsets: Record<Exclude<TimeRangePreset, "all">, number> = {
+    "15m": 15 * 60 * 1000,
+    "1h": 60 * 60 * 1000,
+    "24h": 24 * 60 * 60 * 1000,
+    "7d": 7 * 24 * 60 * 60 * 1000,
+  };
+  const startMs = now.getTime() - offsets[range as Exclude<TimeRangePreset, "all">];
+  return { start: new Date(startMs).toISOString(), end };
+}
+
+function filterLogsByWindow(entries: LogEntry[], windowStart: number | null, windowEnd: number | null): LogEntry[] {
+  if (windowStart === null && windowEnd === null) {
+    return entries;
+  }
+  return entries.filter((entry) => {
+    const timestamp = new Date(entry.timestamp).getTime();
+    if (Number.isNaN(timestamp)) {
+      return true;
+    }
+    if (windowStart !== null && timestamp < windowStart) {
+      return false;
+    }
+    if (windowEnd !== null && timestamp > windowEnd) {
+      return false;
+    }
+    return true;
+  });
+}
+
 export function LoggingPanel(): JSX.Element {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [cursor, setCursor] = useState<number | null>(null);
   const cursorRef = useRef<number | null>(null);
   const [source, setSource] = useState<LogType>("runtime");
   const [level, setLevel] = useState<LogLevelFilter | "ALL">("INFO");
+  const [timeRange, setTimeRange] = useState<TimeRangePreset>("all");
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadLogs = useCallback(
     async (mode: "refresh" | "append" = "refresh") => {
       const effectiveLevel = level === "ALL" ? undefined : level;
       const shouldAppend = mode === "append" && cursorRef.current !== null;
+      const window = resolveTimeWindow(timeRange);
+      const windowStart = window.start ? Date.parse(window.start) : null;
+      const windowEnd = window.end ? Date.parse(window.end) : null;
       if (mode === "refresh") {
         setIsLoading(true);
       }
@@ -63,20 +112,23 @@ export function LoggingPanel(): JSX.Element {
           after: shouldAppend ? cursorRef.current ?? undefined : undefined,
           level: effectiveLevel,
           type: source,
+          start: window.start,
+          end: window.end,
         });
         cursorRef.current = response.cursor;
         setCursor(response.cursor);
         setError(null);
         setLogs((previous) => {
           if (!shouldAppend) {
-            return response.logs.slice(-MAX_ENTRIES);
+            return filterLogsByWindow(response.logs, windowStart, windowEnd).slice(-MAX_ENTRIES);
           }
           const existing = new Set(previous.map((entry) => entry.sequence));
           const appended = response.logs.filter((entry) => !existing.has(entry.sequence));
           if (appended.length === 0) {
-            return previous;
+            return filterLogsByWindow(previous, windowStart, windowEnd).slice(-MAX_ENTRIES);
           }
-          return [...previous, ...appended].slice(-MAX_ENTRIES);
+          const combined = [...previous, ...appended];
+          return filterLogsByWindow(combined, windowStart, windowEnd).slice(-MAX_ENTRIES);
         });
       } catch (err) {
         setError((err as Error).message);
@@ -86,7 +138,7 @@ export function LoggingPanel(): JSX.Element {
         }
       }
     },
-    [level, source],
+    [level, source, timeRange],
   );
 
   useEffect(() => {
@@ -111,6 +163,38 @@ export function LoggingPanel(): JSX.Element {
   }, [autoRefresh, loadLogs]);
 
   const renderedRows = useMemo(() => logs.slice().reverse(), [logs]);
+
+  const handleDownload = useCallback(async () => {
+    const effectiveLevel = level === "ALL" ? undefined : level;
+    const window = resolveTimeWindow(timeRange);
+    setIsDownloading(true);
+    try {
+      const blob = await downloadLogs({
+        level: effectiveLevel,
+        type: source,
+        start: window.start,
+        end: window.end,
+      });
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const parts = ["projectplanner", "logs", source];
+      if (effectiveLevel) {
+        parts.push(effectiveLevel.toLowerCase());
+      }
+      const filename = `${parts.join("-")}-${timestamp}.jsonl`;
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setIsDownloading(false);
+    }
+  }, [level, source, timeRange]);
 
   return (
     <section className="space-y-4">
@@ -150,6 +234,23 @@ export function LoggingPanel(): JSX.Element {
               ))}
             </select>
           </div>
+          <div className="flex items-center gap-2">
+            <label htmlFor="log-window" className="text-slate-300">
+              Window
+            </label>
+            <select
+              id="log-window"
+              value={timeRange}
+              onChange={(event) => setTimeRange(event.target.value as TimeRangePreset)}
+              className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100"
+            >
+              {TIME_RANGE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <span className="text-slate-500">
             {renderedRows.length} {source === "prompts" ? "prompt entries" : "records"}
           </span>
@@ -164,6 +265,14 @@ export function LoggingPanel(): JSX.Element {
             />
             Auto refresh
           </label>
+          <button
+            type="button"
+            onClick={() => void handleDownload()}
+            disabled={isDownloading}
+            className="rounded border border-slate-700 bg-slate-900 px-3 py-1 text-xs font-medium text-slate-200 transition hover:border-emerald-500 hover:text-emerald-300 disabled:opacity-60 disabled:hover:border-slate-700"
+          >
+            {isDownloading ? "Preparing…" : "Download"}
+          </button>
           <button
             type="button"
             onClick={() => loadLogs("refresh")}

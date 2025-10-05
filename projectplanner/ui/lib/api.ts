@@ -325,15 +325,24 @@ export async function fetchLogs(params: {
   limit?: number;
   level?: LogLevelFilter;
   type?: LogType;
+  start?: string;
+  end?: string;
 } = {}): Promise<LogsResponse> {
   const search = new URLSearchParams();
-  const limit = params.limit ?? 200;
-  search.set("limit", String(limit));
+  if (typeof params.limit === "number") {
+    search.set("limit", String(params.limit));
+  }
   if (typeof params.after === "number") {
     search.set("after", String(params.after));
   }
   if (params.level) {
     search.set("level", params.level.toUpperCase());
+  }
+  if (params.start) {
+    search.set("start", params.start);
+  }
+  if (params.end) {
+    search.set("end", params.end);
   }
   const logType = params.type ?? "runtime";
   search.set("type", logType);
@@ -341,7 +350,9 @@ export async function fetchLogs(params: {
   return http<LogsResponse>(`/api/projectplanner/logs${query ? `?${query}` : ""}`);
 }
 
-export async function fetchObservabilitySnapshot(params: { limit?: number; calls?: number } = {}): Promise<ObservabilitySnapshot> {
+export async function fetchObservabilitySnapshot(
+  params: { limit?: number; calls?: number; start?: string; end?: string } = {},
+): Promise<ObservabilitySnapshot> {
   const search = new URLSearchParams();
   if (typeof params.limit === "number") {
     search.set("limit", String(params.limit));
@@ -349,8 +360,69 @@ export async function fetchObservabilitySnapshot(params: { limit?: number; calls
   if (typeof params.calls === "number") {
     search.set("calls", String(params.calls));
   }
+  if (params.start) {
+    search.set("start", params.start);
+  }
+  if (params.end) {
+    search.set("end", params.end);
+  }
   const query = search.toString();
   return http<ObservabilitySnapshot>(`/api/projectplanner/observability${query ? `?${query}` : ""}`);
+}
+
+export async function downloadLogs(params: {
+  level?: LogLevelFilter;
+  type?: LogType;
+  start?: string;
+  end?: string;
+} = {}): Promise<Blob> {
+  const search = new URLSearchParams();
+  if (params.level) {
+    search.set("level", params.level.toUpperCase());
+  }
+  if (params.type) {
+    search.set("type", params.type);
+  }
+  if (params.start) {
+    search.set("start", params.start);
+  }
+  if (params.end) {
+    search.set("end", params.end);
+  }
+  const query = search.toString();
+  const response = await fetch(resolveApiUrl(`/api/projectplanner/logs/export${query ? `?${query}` : ""}`));
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Failed to export logs (status ${response.status})`);
+  }
+  return await response.blob();
+}
+
+export async function downloadObservabilitySnapshot(
+  params: { limit?: number; calls?: number; start?: string; end?: string } = {},
+): Promise<Blob> {
+  const search = new URLSearchParams();
+  if (typeof params.limit === "number") {
+    search.set("limit", String(params.limit));
+  }
+  if (typeof params.calls === "number") {
+    search.set("calls", String(params.calls));
+  }
+  if (params.start) {
+    search.set("start", params.start);
+  }
+  if (params.end) {
+    search.set("end", params.end);
+  }
+  const query = search.toString();
+  const response = await fetch(
+    resolveApiUrl(`/api/projectplanner/observability/export${query ? `?${query}` : ""}`),
+  );
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Failed to export observability snapshot (status ${response.status})`);
+  }
+  return await response.blob();
 }
 
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 from typing import Iterator, Optional
 
@@ -25,6 +26,24 @@ from projectplanner.services.observability import build_observability_snapshot
 
 router = APIRouter()
 LOGGER = get_logger(__name__)
+
+
+def _parse_query_datetime(value: Optional[str]) -> Optional[datetime]:
+    """Parse an ISO8601 datetime string from query parameters."""
+
+    if value is None:
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    normalized = candidate.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid datetime: {value!r}") from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _format_sse(event_type: str, payload: dict) -> str:
@@ -131,7 +150,12 @@ async def list_logs(
     after: Optional[int] = Query(
         None, ge=0, description="Return records with a sequence id greater than this value.",
     ),
-    limit: int = Query(200, ge=1, le=2000, description="Maximum number of log records to return."),
+    limit: Optional[int] = Query(
+        None,
+        ge=1,
+        le=2000,
+        description="Maximum number of log records to return when specified.",
+    ),
     level: Optional[str] = Query(
         None,
         pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$",
@@ -143,32 +167,97 @@ async def list_logs(
         pattern="^(?i)(runtime|prompts)$",
         description="Log stream to return (runtime or prompts).",
     ),
+    start: Optional[str] = Query(
+        None,
+        description="Inclusive ISO8601 timestamp specifying the earliest log to include.",
+        alias="start",
+    ),
+    end: Optional[str] = Query(
+        None,
+        description="Inclusive ISO8601 timestamp specifying the latest log to include.",
+        alias="end",
+    ),
 ) -> LogsResponse:
     """Expose captured logs for debugging and observability."""
 
     level_filter = level.upper() if level else None
     manager = get_log_manager()
     normalized_type = log_type.lower() if log_type else "runtime"
-    logs = manager.get_logs(after=after, limit=limit, level=level_filter, log_type=normalized_type)
+    start_dt = _parse_query_datetime(start)
+    end_dt = _parse_query_datetime(end)
+    logs = manager.get_logs(
+        after=after,
+        limit=limit,
+        level=level_filter,
+        log_type=normalized_type,
+        start=start_dt,
+        end=end_dt,
+    )
     cursor = manager.latest_cursor()
     LOGGER.debug(
-        "Served %s log records (after=%s, limit=%s, level=%s, type=%s)",
+        "Served %s log records (after=%s, limit=%s, level=%s, type=%s, start=%s, end=%s)",
         len(logs),
         after,
         limit,
         level_filter,
         normalized_type,
+        start_dt.isoformat() if start_dt else None,
+        end_dt.isoformat() if end_dt else None,
     )
     return LogsResponse(logs=logs, cursor=cursor)
 
 
+@router.get("/logs/export")
+async def export_logs(
+    level: Optional[str] = Query(
+        None,
+        pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$",
+        description="Minimum severity level to include.",
+    ),
+    log_type: str = Query(
+        "runtime",
+        alias="type",
+        pattern="^(?i)(runtime|prompts)$",
+        description="Log stream to return (runtime or prompts).",
+    ),
+    start: Optional[str] = Query(
+        None,
+        description="Inclusive ISO8601 timestamp specifying the earliest log to include.",
+    ),
+    end: Optional[str] = Query(
+        None,
+        description="Inclusive ISO8601 timestamp specifying the latest log to include.",
+    ),
+) -> StreamingResponse:
+    level_filter = level.upper() if level else None
+    manager = get_log_manager()
+    normalized_type = log_type.lower() if log_type else "runtime"
+    start_dt = _parse_query_datetime(start)
+    end_dt = _parse_query_datetime(end)
+    logs = manager.get_logs(
+        level=level_filter,
+        log_type=normalized_type,
+        start=start_dt,
+        end=end_dt,
+    )
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    filename = f"projectplanner-logs-{normalized_type}-{timestamp}.jsonl"
+
+    def iterator() -> Iterator[str]:
+        for record in logs:
+            yield json.dumps(record, ensure_ascii=False) + "\n"
+
+    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+    return StreamingResponse(iterator(), media_type="application/x-ndjson", headers=headers)
+
+
 @router.get("/observability", response_model=ObservabilityResponse)
 async def observability_snapshot(
-    limit: int = Query(
-        400,
+    limit: Optional[int] = Query(
+        None,
         ge=100,
         le=2000,
-        description="Maximum number of log records inspected per stream.",
+        description="Maximum number of log records inspected per stream when specified.",
     ),
     calls: int = Query(
         120,
@@ -176,14 +265,64 @@ async def observability_snapshot(
         le=500,
         description="Maximum number of recent module calls to include.",
     ),
+    start: Optional[str] = Query(
+        None,
+        description="Inclusive ISO8601 timestamp specifying the earliest log to include.",
+    ),
+    end: Optional[str] = Query(
+        None,
+        description="Inclusive ISO8601 timestamp specifying the latest log to include.",
+    ),
 ) -> ObservabilityResponse:
     LOGGER.debug(
-        "Observability snapshot requested (limit=%s, calls=%s)",
+        "Observability snapshot requested (limit=%s, calls=%s, start=%s, end=%s)",
         limit,
         calls,
+        start,
+        end,
     )
-    snapshot = build_observability_snapshot(limit=limit, max_calls=calls)
+    start_dt = _parse_query_datetime(start)
+    end_dt = _parse_query_datetime(end)
+    snapshot = build_observability_snapshot(limit=limit, max_calls=calls, start=start_dt, end=end_dt)
     return snapshot
+
+
+@router.get("/observability/export")
+async def export_observability(
+    limit: Optional[int] = Query(
+        None,
+        ge=100,
+        le=5000,
+        description="Maximum number of log records inspected per stream when specified.",
+    ),
+    calls: Optional[int] = Query(
+        None,
+        ge=10,
+        le=2000,
+        description="Maximum number of recent module calls to include when specified.",
+    ),
+    start: Optional[str] = Query(
+        None,
+        description="Inclusive ISO8601 timestamp specifying the earliest log to include.",
+    ),
+    end: Optional[str] = Query(
+        None,
+        description="Inclusive ISO8601 timestamp specifying the latest log to include.",
+    ),
+) -> StreamingResponse:
+    start_dt = _parse_query_datetime(start)
+    end_dt = _parse_query_datetime(end)
+    snapshot = build_observability_snapshot(
+        limit=limit,
+        max_calls=calls or 500,
+        start=start_dt,
+        end=end_dt,
+    )
+    payload = json.dumps(snapshot.model_dump(), ensure_ascii=False, indent=2)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    filename = f"projectplanner-observability-{timestamp}.json"
+    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+    return StreamingResponse(iter([payload]), media_type="application/json", headers=headers)
 
 
 @router.post("/export")
