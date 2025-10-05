@@ -60,7 +60,8 @@ const TIME_RANGE_OPTIONS: Array<{ value: TimeRangePreset; label: string }> = [
   { value: "custom", label: "Custom range" },
 ];
 
-const CALL_LIMIT = 120;
+const DEFAULT_CALL_LIMIT = 50;
+const CALL_LIMIT_OPTIONS = [10, 25, 50];
 const REFRESH_INTERVAL_MS = 10000;
 
 function resolveTimeWindow(
@@ -97,6 +98,7 @@ export function ObservabilityDashboard(): JSX.Element {
   const [isDownloading, setIsDownloading] = useState(false);
   const [timeRange, setTimeRange] = useState<TimeRangePreset>("all");
   const [sessionStartedAt, setSessionStartedAt] = useState<string | null>(null);
+  const [callLimit, setCallLimit] = useState<number>(DEFAULT_CALL_LIMIT);
   const [customWindow, setCustomWindow] = useState<{ start?: string; end?: string }>({});
   const [customStartInput, setCustomStartInput] = useState<string>("");
   const [customEndInput, setCustomEndInput] = useState<string>("");
@@ -109,9 +111,10 @@ export function ObservabilityDashboard(): JSX.Element {
       sessionStart: sessionStartedAt ?? undefined,
       customWindow,
     });
+    const nextLimit = Math.max(callLimit, 1);
     try {
       const data = await fetchObservabilitySnapshot({
-        calls: CALL_LIMIT,
+        calls: nextLimit,
         start: window.start,
         end: window.end,
       });
@@ -129,7 +132,7 @@ export function ObservabilityDashboard(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [timeRange, sessionStartedAt, customWindow]);
+  }, [timeRange, sessionStartedAt, customWindow, callLimit]);
 
   useEffect(() => {
     void loadSnapshot();
@@ -208,8 +211,9 @@ export function ObservabilityDashboard(): JSX.Element {
     if (!snapshot || !selectedModule) {
       return [];
     }
-    return snapshot.calls.filter((call) => call.module_id === selectedModule).slice(0, CALL_LIMIT);
-  }, [snapshot, selectedModule]);
+    const limit = Math.max(callLimit, 1);
+    return snapshot.calls.filter((call) => call.module_id === selectedModule).slice(0, limit);
+  }, [snapshot, selectedModule, callLimit]);
 
   const errorMessage = useMemo(() => normalizeErrorMessage(error), [error]);
 
@@ -220,10 +224,11 @@ export function ObservabilityDashboard(): JSX.Element {
       sessionStart: sessionStartedAt ?? undefined,
       customWindow,
     });
+    const nextLimit = Math.max(callLimit, 1);
     setIsDownloading(true);
     try {
       const blob = await downloadObservabilitySnapshot({
-        calls: CALL_LIMIT,
+        calls: nextLimit,
         start: window.start,
         end: window.end,
       });
@@ -242,7 +247,7 @@ export function ObservabilityDashboard(): JSX.Element {
     } finally {
       setIsDownloading(false);
     }
-  }, [timeRange, sessionStartedAt, customWindow]);
+  }, [timeRange, sessionStartedAt, customWindow, callLimit]);
 
   const applyCustomRange = useCallback(() => {
     const startIso = fromLocalInputValue(customStartInput);
@@ -293,6 +298,21 @@ export function ObservabilityDashboard(): JSX.Element {
               {TIME_RANGE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label htmlFor="observability-call-limit">Max calls</label>
+            <select
+              id="observability-call-limit"
+              value={callLimit}
+              onChange={(event) => setCallLimit(Number(event.target.value))}
+              className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100"
+            >
+              {CALL_LIMIT_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
                 </option>
               ))}
             </select>
@@ -399,7 +419,7 @@ export function ObservabilityDashboard(): JSX.Element {
           </div>
           <div className="space-y-4">
             <ModuleDetails node={selectedNode} />
-            <CallLog calls={calls} loading={loading} />
+            <CallLog calls={calls} loading={loading} limit={callLimit} />
           </div>
         </div>
       )}
@@ -678,12 +698,12 @@ function determineBlockMessage(message: string): boolean {
   return message.split(/\s+/).some((chunk) => chunk.length > 80);
 }
 
-function CallLog({ calls, loading }: { calls: ObservabilityCall[]; loading: boolean }): JSX.Element {
+function CallLog({ calls, loading, limit }: { calls: ObservabilityCall[]; loading: boolean; limit: number }): JSX.Element {
   return (
     <section className="space-y-3 rounded border border-slate-800 bg-slate-900 p-4">
       <header className="flex items-center justify-between">
         <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Recent Calls</h3>
-        <span className="text-xs text-slate-500">{calls.length} shown</span>
+        <span className="text-xs text-slate-500">Showing {calls.length} of {limit}</span>
       </header>
       {calls.length === 0 && !loading && (
         <p className="text-sm text-slate-400">No calls recorded for the selected module yet.</p>

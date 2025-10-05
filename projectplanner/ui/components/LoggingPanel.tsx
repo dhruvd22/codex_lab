@@ -17,7 +17,8 @@ const TIME_RANGE_OPTIONS: Array<{ value: TimeRangePreset; label: string }> = [
   { value: "7d", label: "Last 7 days" },
 ];
 const AUTO_REFRESH_INTERVAL_MS = 5000;
-const MAX_ENTRIES = 2000;
+const DEFAULT_PAGE_SIZE = 50;
+const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
 function formatTimestamp(value: string): string {
   const date = new Date(value);
@@ -96,6 +97,7 @@ export function LoggingPanel(): JSX.Element {
   const [isLoading, setIsLoading] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
 
   const loadLogs = useCallback(
     async (mode: "refresh" | "append" = "refresh") => {
@@ -104,6 +106,7 @@ export function LoggingPanel(): JSX.Element {
       const window = resolveTimeWindow(timeRange);
       const windowStart = window.start ? Date.parse(window.start) : null;
       const windowEnd = window.end ? Date.parse(window.end) : null;
+      const limit = Math.max(pageSize, 1);
       if (mode === "refresh") {
         setIsLoading(true);
       }
@@ -114,21 +117,22 @@ export function LoggingPanel(): JSX.Element {
           type: source,
           start: window.start,
           end: window.end,
+          limit,
         });
         cursorRef.current = response.cursor;
         setCursor(response.cursor);
         setError(null);
         setLogs((previous) => {
           if (!shouldAppend) {
-            return filterLogsByWindow(response.logs, windowStart, windowEnd).slice(-MAX_ENTRIES);
+            return filterLogsByWindow(response.logs, windowStart, windowEnd).slice(-limit);
           }
           const existing = new Set(previous.map((entry) => entry.sequence));
           const appended = response.logs.filter((entry) => !existing.has(entry.sequence));
           if (appended.length === 0) {
-            return filterLogsByWindow(previous, windowStart, windowEnd).slice(-MAX_ENTRIES);
+            return filterLogsByWindow(previous, windowStart, windowEnd).slice(-limit);
           }
           const combined = [...previous, ...appended];
-          return filterLogsByWindow(combined, windowStart, windowEnd).slice(-MAX_ENTRIES);
+          return filterLogsByWindow(combined, windowStart, windowEnd).slice(-limit);
         });
       } catch (err) {
         setError((err as Error).message);
@@ -138,7 +142,7 @@ export function LoggingPanel(): JSX.Element {
         }
       }
     },
-    [level, source, timeRange],
+    [level, source, timeRange, pageSize],
   );
 
   useEffect(() => {
@@ -251,8 +255,25 @@ export function LoggingPanel(): JSX.Element {
               ))}
             </select>
           </div>
+          <div className="flex items-center gap-2">
+            <label htmlFor="log-page-size" className="text-slate-300">
+              Max rows
+            </label>
+            <select
+              id="log-page-size"
+              value={pageSize}
+              onChange={(event) => setPageSize(Number(event.target.value))}
+              className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100"
+            >
+              {PAGE_SIZE_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </div>
           <span className="text-slate-500">
-            {renderedRows.length} {source === "prompts" ? "prompt entries" : "records"}
+            Showing {renderedRows.length} of {pageSize} {source === "prompts" ? "prompt entries" : "records"}
           </span>
         </div>
         <div className="flex items-center gap-3 text-sm">
