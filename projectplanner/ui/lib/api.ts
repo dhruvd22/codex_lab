@@ -110,6 +110,45 @@ export type LogsResponse = {
   cursor: number;
 };
 
+export type ObservabilityStatus = "idle" | "healthy" | "degraded" | "error";
+
+export type ObservabilityNode = {
+  id: string;
+  name: string;
+  category: "endpoint" | "pipeline" | "agent" | "storage" | "service";
+  description: string;
+  status: ObservabilityStatus;
+  event_count: number;
+  run_ids: string[];
+  last_event?: string | null;
+  last_timestamp?: string | null;
+  metrics: Record<string, unknown>;
+};
+
+export type ObservabilityEdge = {
+  source: string;
+  target: string;
+  label?: string | null;
+};
+
+export type ObservabilityCall = {
+  module_id: string;
+  timestamp: string;
+  level: string;
+  event?: string | null;
+  message: string;
+  run_id?: string | null;
+  log_type: LogType;
+  payload?: Record<string, unknown> | null;
+};
+
+export type ObservabilitySnapshot = {
+  generated_at: string;
+  nodes: ObservabilityNode[];
+  edges: ObservabilityEdge[];
+  calls: ObservabilityCall[];
+};
+
 export type ExportRequest = {
   run_id: string;
   format: "yaml" | "jsonl" | "md";
@@ -300,6 +339,18 @@ export async function fetchLogs(params: {
   search.set("type", logType);
   const query = search.toString();
   return http<LogsResponse>(`/api/projectplanner/logs${query ? `?${query}` : ""}`);
+}
+
+export async function fetchObservabilitySnapshot(params: { limit?: number; calls?: number } = {}): Promise<ObservabilitySnapshot> {
+  const search = new URLSearchParams();
+  if (typeof params.limit === "number") {
+    search.set("limit", String(params.limit));
+  }
+  if (typeof params.calls === "number") {
+    search.set("calls", String(params.calls));
+  }
+  const query = search.toString();
+  return http<ObservabilitySnapshot>(`/api/projectplanner/observability${query ? `?${query}` : ""}`);
 }
 
 

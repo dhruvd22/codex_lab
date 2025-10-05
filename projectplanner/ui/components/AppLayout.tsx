@@ -1,9 +1,10 @@
 import { ReactNode, useState } from "react";
 
 import { LoggingPanel } from "@/components/LoggingPanel";
+import { ObservabilityDashboard } from "@/components/ObservabilityDashboard";
 
 export function AppLayout({ children }: { children: ReactNode }): JSX.Element {
-  const [activeTab, setActiveTab] = useState<"planner" | "logging">("planner");
+  const [activeTab, setActiveTab] = useState<"planner" | "logging" | "observability">("planner");
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -23,6 +24,19 @@ export function AppLayout({ children }: { children: ReactNode }): JSX.Element {
               }`}
             >
               Planner
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "observability"}
+              onClick={() => setActiveTab("observability")}
+              className={`rounded px-3 py-1 transition ${
+                activeTab === "observability"
+                  ? "bg-emerald-500 text-slate-950"
+                  : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+              }`}
+            >
+              Observability
             </button>
             <button
               type="button"
@@ -48,6 +62,14 @@ export function AppLayout({ children }: { children: ReactNode }): JSX.Element {
         >
           {children}
         </div>
+        <div
+          role="tabpanel"
+          aria-hidden={activeTab !== "observability"}
+          className={activeTab === "observability" ? "" : "hidden"}
+        >
+          <ObservabilityDashboard />
+        </div>
+
         <div
           role="tabpanel"
           aria-hidden={activeTab !== "logging"}

@@ -15,11 +15,13 @@ from projectplanner.models import (
     IngestionResponse,
     PlanRequest,
     LogsResponse,
+    ObservabilityResponse,
     StepsResponse,
     StepUpdateRequest,
 )
 from projectplanner.services import ingest as ingest_service
 from projectplanner.services import plan as plan_service
+from projectplanner.services.observability import build_observability_snapshot
 
 router = APIRouter()
 LOGGER = get_logger(__name__)
@@ -158,6 +160,30 @@ async def list_logs(
         normalized_type,
     )
     return LogsResponse(logs=logs, cursor=cursor)
+
+
+@router.get("/observability", response_model=ObservabilityResponse)
+async def observability_snapshot(
+    limit: int = Query(
+        400,
+        ge=100,
+        le=2000,
+        description="Maximum number of log records inspected per stream.",
+    ),
+    calls: int = Query(
+        120,
+        ge=10,
+        le=500,
+        description="Maximum number of recent module calls to include.",
+    ),
+) -> ObservabilityResponse:
+    LOGGER.debug(
+        "Observability snapshot requested (limit=%s, calls=%s)",
+        limit,
+        calls,
+    )
+    snapshot = build_observability_snapshot(limit=limit, max_calls=calls)
+    return snapshot
 
 
 @router.post("/export")

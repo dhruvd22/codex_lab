@@ -183,8 +183,58 @@ class LogsResponse(BaseModel):
 
 
 
+class ObservabilityCall(BaseModel):
+    """Recent invocation emitted by a module participating in the workflow."""
+
+    module_id: str = Field(..., description="Identifier of the module that emitted the call.")
+    timestamp: datetime = Field(..., description="Timestamp when the call occurred.")
+    level: str = Field(..., description="Severity level associated with the call.")
+    event: Optional[str] = Field(None, description="Event identifier recorded for the call.")
+    message: str = Field(..., description="Primary log message for the call.")
+    log_type: Literal["runtime", "prompts"] = Field("runtime", description="Log stream that produced the call.")
+    run_id: Optional[str] = Field(None, description="Run identifier associated with the call, when available.")
+    payload: Optional[Dict[str, Any]] = Field(None, description="Structured payload attached to the call.")
+
+
+class ObservabilityNode(BaseModel):
+    """Module surfaced on the observability dashboard."""
+
+    id: str = Field(..., description="Stable identifier for the module.")
+    name: str = Field(..., description="Human-friendly module name.")
+    category: Literal["endpoint", "pipeline", "agent", "storage", "service"] = Field(
+        ..., description="Module category used for grouping and styling."
+    )
+    description: str = Field(..., description="Summary of what the module is responsible for.")
+    status: Literal["idle", "healthy", "degraded", "error"] = Field(
+        ..., description="Derived health status based on recent events."
+    )
+    event_count: int = Field(0, ge=0, description="Number of recent events observed for this module.")
+    run_ids: List[str] = Field(default_factory=list, description="Recent run identifiers touching this module.")
+    last_event: Optional[str] = Field(None, description="Most recent event associated with this module.")
+    last_timestamp: Optional[datetime] = Field(None, description="Timestamp of the latest event.")
+    metrics: Dict[str, Any] = Field(default_factory=dict, description="Additional module-specific metrics.")
+
+
+class ObservabilityEdge(BaseModel):
+    """Directed relationship between workflow modules."""
+
+    source: str = Field(..., description="Source module id.")
+    target: str = Field(..., description="Target module id.")
+    label: Optional[str] = Field(None, description="Optional label describing the edge relationship.")
+
+
+class ObservabilityResponse(BaseModel):
+    """Snapshot returned to populate the observability dashboard."""
+
+    generated_at: datetime = Field(..., description="Timestamp when the snapshot was generated.")
+    nodes: List[ObservabilityNode] = Field(..., description="Modules participating in the workflow.")
+    edges: List[ObservabilityEdge] = Field(..., description="Directed relationships between modules.")
+    calls: List[ObservabilityCall] = Field(default_factory=list, description="Recent module invocations used for drill-down.")
+
 class StepUpdateRequest(BaseModel):
     """Request payload for updating stored steps."""
 
     steps: List[PromptStep]
+
+
 
