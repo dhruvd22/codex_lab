@@ -168,7 +168,6 @@ class DecomposerAgent:
         total: int,
         fallback: PromptStep,
     ) -> PromptStep:
-        project_context = self._compress_context(payload)
         milestone_payload = {
             "order": index,
             "title": milestone_title,
@@ -182,19 +181,25 @@ class DecomposerAgent:
             "assumptions": payload.plan.assumptions,
             "risks": payload.plan.risks,
         }
-        user_prompt = (
-            f"Milestone {index + 1} of {total}: {milestone_title}\n"
-            f"Milestone objective: {milestone_payload['objective']}\n"
-            f"Success criteria: {json.dumps(milestone_payload['success_criteria'])}\n"
-            f"Dependencies: {json.dumps(milestone_payload['dependencies'])}\n"
-            f"Prior milestone status: {json.dumps(list(previous_summaries)) if previous_summaries else '[]'}\n"
-            "Project snapshot:\n"
-            f"{json.dumps(snapshot, indent=2)}\n"
-            "Relevant context (truncated):\n"
-            '"""\n'
-            f"{project_context}\n"
-            '"""\n'
-            "Return the JSON structure described in the system instructions. Reference prior milestones when useful and respect the target stack."
+        prior_summaries = list(previous_summaries)
+
+        attempts: List[dict[str, int | None]] = [
+            {
+                "context_limit": MAX_CONTEXT_CHARS,
+                "summary_limit": None,
+                "max_tokens": MAX_COMPLETION_TOKENS,
+            }
+        ]
+        trimmed_context_limit = max(int(MAX_CONTEXT_CHARS * 0.75), 4000)
+        boosted_tokens = min(MAX_COMPLETION_TOKENS + 1024, int(MAX_COMPLETION_TOKENS * 3 // 2))
+        if boosted_tokens <= MAX_COMPLETION_TOKENS:
+            boosted_tokens = MAX_COMPLETION_TOKENS
+        attempts.append(
+            {
+                "context_limit": trimmed_context_limit,
+                "summary_limit": 3,
+                "max_tokens": boosted_tokens,
+            }
         )
 
         log_prompt(
@@ -205,67 +210,131 @@ class DecomposerAgent:
             model=self._model,
             metadata={"milestone": milestone_title, "index": index, "total": total},
         )
-        log_prompt(
-            agent="DecomposerAgent",
-            role="user",
-            prompt=user_prompt,
-            run_id=payload.run_id,
-            model=self._model,
-            metadata={
-                "milestone": milestone_title,
-                "index": index,
-                "total": total,
-                "previous_summaries": len(previous_summaries),
-            },
-        )
 
-        response = create_chat_completion(
-            self._client,
-            model=self._model,
-            messages=[
-                {"role": "system", "content": DECOMPOSER_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.25,
-            max_tokens=MAX_COMPLETION_TOKENS,
-        )
-        response_metadata = extract_choice_metadata(response)
-        response_metadata.update(
-            {
-                "milestone": milestone_title,
-                "index": index,
-                "total": total,
-            }
-        )
-        if not response.choices:
-            response_metadata["reason"] = "no_choices"
+        for attempt_index, attempt in enumerate(attempts):
+            context_limit = int(attempt["context_limit"] or MAX_CONTEXT_CHARS)
+            summary_limit = attempt["summary_limit"]
+            max_tokens = int(attempt["max_tokens"] or MAX_COMPLETION_TOKENS)
+            attempt_summaries = prior_summaries if summary_limit is None else prior_summaries[-summary_limit:]
+            project_context = self._compress_context(payload, limit=context_limit)
+            prior_status = json.dumps(list(attempt_summaries)) if attempt_summaries else "[]"
+            user_prompt = (
+                f"Milestone {index + 1} of {total}: {milestone_title}\n"
+                f"Milestone objective: {milestone_payload['objective']}\n"
+                f"Success criteria: {json.dumps(milestone_payload['success_criteria'])}\n"
+                f"Dependencies: {json.dumps(milestone_payload['dependencies'])}\n"
+                f"Prior milestone status: {prior_status}\n"
+                "Project snapshot:\n"
+                f"{json.dumps(snapshot, indent=2)}\n"
+                "Relevant context (truncated):\n"
+                '"""\n'
+                f"{project_context}\n"
+                '"""\n'
+                "Return the JSON structure described in the system instructions. Reference prior milestones when useful and respect the target stack."
+            )
+
+            log_prompt(
+                agent="DecomposerAgent",
+                role="user",
+                prompt=user_prompt,
+                run_id=payload.run_id,
+                model=self._model,
+                metadata={
+                    "milestone": milestone_title,
+                    "index": index,
+                    "total": total,
+                    "previous_summaries": len(attempt_summaries),
+                    "attempt": attempt_index + 1,
+                    "context_limit": context_limit,
+                    "max_tokens": max_tokens,
+                },
+            )
+
+            response = create_chat_completion(
+                self._client,
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": DECOMPOSER_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.25,
+                max_tokens=max_tokens,
+            )
+            response_metadata = extract_choice_metadata(response)
+            response_metadata.update(
+                {
+                    "milestone": milestone_title,
+                    "index": index,
+                    "total": total,
+                    "attempt": attempt_index + 1,
+                    "max_tokens": max_tokens,
+                    "context_limit": context_limit,
+                    "previous_summaries": len(attempt_summaries),
+                }
+            )
+            if not response.choices:
+                response_metadata["reason"] = "no_choices"
+                log_prompt(
+                    agent="DecomposerAgent",
+                    role="assistant",
+                    prompt="",
+                    run_id=payload.run_id,
+                    stage="response",
+                    model=self._model,
+                    metadata=response_metadata,
+                )
+                raise ValueError("Decomposer model returned no choices.")
+            message = response.choices[0].message
+            content = extract_message_content(message)
+            response_metadata["has_content"] = bool(content)
+            if message is not None:
+                response_metadata.setdefault("message", message)
             log_prompt(
                 agent="DecomposerAgent",
                 role="assistant",
-                prompt="",
+                prompt=content or "",
                 run_id=payload.run_id,
                 stage="response",
                 model=self._model,
                 metadata=response_metadata,
             )
-            raise ValueError("Decomposer model returned no choices.")
-        message = response.choices[0].message
-        content = extract_message_content(message)
-        response_metadata["has_content"] = bool(content)
-        if message is not None:
-            response_metadata.setdefault("message", message)
-        log_prompt(
-            agent="DecomposerAgent",
-            role="assistant",
-            prompt=content or "",
-            run_id=payload.run_id,
-            stage="response",
-            model=self._model,
-            metadata=response_metadata,
-        )
-        if not content:
+            if content:
+                data = self._parse_step_json(content)
+                return PromptStep(
+                    id=step_id,
+                    title=milestone_title,
+                    system_prompt=data.get("system_prompt") or fallback.system_prompt,
+                    user_prompt=data.get("user_prompt") or fallback.user_prompt,
+                    expected_artifacts=data.get("expected_artifacts") or fallback.expected_artifacts,
+                    tools=data.get("tools") or fallback.tools,
+                    acceptance_criteria=data.get("acceptance_criteria") or fallback.acceptance_criteria,
+                    inputs=data.get("inputs") or fallback.inputs,
+                    outputs=data.get("outputs") or fallback.outputs,
+                    token_budget=data.get("token_budget") or fallback.token_budget,
+                    cited_artifacts=fallback.cited_artifacts,
+                )
             details = []
             finish_reason = response_metadata.get("finish_reason")
+            if finish_reason and attempt_index < len(attempts) - 1:
+                next_attempt = attempts[attempt_index + 1]
+                LOGGER.warning(
+                    "Decomposer response truncated; retrying with adjusted context (attempt %s).",
+                    attempt_index + 2,
+                    extra={
+                        "event": "agent.decomposer.retry_length",
+                        "run_id": payload.run_id,
+                        "payload": {
+                            "step_id": step_id,
+                            "attempt": attempt_index + 1,
+                            "context_limit": context_limit,
+                            "max_tokens": max_tokens,
+                            "next_context_limit": int(next_attempt["context_limit"] or context_limit),
+                            "next_max_tokens": int(next_attempt["max_tokens"] or max_tokens),
+                            "finish_reason": finish_reason,
+                        },
+                    },
+                )
+                continue
             if finish_reason:
                 details.append(f"finish_reason={finish_reason}")
             if response_metadata.get("refusal"):
@@ -276,20 +345,8 @@ class DecomposerAgent:
             suffix = f" ({', '.join(details)})" if details else ""
             raise ValueError(f"Decomposer model returned empty content{suffix}.")
 
-        data = self._parse_step_json(content)
-        return PromptStep(
-            id=step_id,
-            title=milestone_title,
-            system_prompt=data.get("system_prompt") or fallback.system_prompt,
-            user_prompt=data.get("user_prompt") or fallback.user_prompt,
-            expected_artifacts=data.get("expected_artifacts") or fallback.expected_artifacts,
-            tools=data.get("tools") or fallback.tools,
-            acceptance_criteria=data.get("acceptance_criteria") or fallback.acceptance_criteria,
-            inputs=data.get("inputs") or fallback.inputs,
-            outputs=data.get("outputs") or fallback.outputs,
-            token_budget=data.get("token_budget") or fallback.token_budget,
-            cited_artifacts=fallback.cited_artifacts,
-        )
+        raise ValueError("Decomposer model returned empty content (all retry attempts exhausted).")
+
 
     def _build_fallback_step(
         self,
