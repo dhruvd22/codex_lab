@@ -211,6 +211,8 @@ export function ObservabilityDashboard(): JSX.Element {
     return snapshot.calls.filter((call) => call.module_id === selectedModule).slice(0, CALL_LIMIT);
   }, [snapshot, selectedModule]);
 
+  const errorMessage = useMemo(() => normalizeErrorMessage(error), [error]);
+
   const lastGenerated = snapshot ? formatDateTime(snapshot.generated_at) : null;
 
   const handleDownload = useCallback(async () => {
@@ -364,7 +366,17 @@ export function ObservabilityDashboard(): JSX.Element {
           )}
         </div>
       </header>
-      {error && <div className="rounded border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</div>}
+      {errorMessage && (
+        <div className="space-y-2 rounded border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+          <p className="whitespace-pre-wrap break-words">{errorMessage.summary}</p>
+          {errorMessage.details && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-rose-300 hover:text-rose-100">View server response</summary>
+              <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded border border-rose-500/20 bg-rose-500/5 p-2 text-[11px] leading-relaxed text-rose-100">{errorMessage.details}</pre>
+            </details>
+          )}
+        </div>
+      )}
       {!snapshot && loading && (
         <div className="rounded border border-slate-800 bg-slate-900 px-4 py-8 text-center text-sm text-slate-300">
           Loading observability signals...
@@ -628,6 +640,44 @@ function ModuleDetails({ node }: { node: ObservabilityNode | null }): JSX.Elemen
   );
 }
 
+function normalizeErrorMessage(value: string | null): { summary: string; details?: string } | null {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { summary: "An unknown error occurred." };
+  }
+  const lower = trimmed.toLowerCase();
+  const looksLikeHtml = lower.startsWith("<!doctype html") || lower.startsWith("<html") || lower.includes("<body");
+  if (looksLikeHtml) {
+    return {
+      summary: "Received an HTML error response from the observability service.",
+      details: trimmed,
+    };
+  }
+  if (trimmed.length > 300) {
+    return {
+      summary: `${trimmed.slice(0, 280).trimEnd()}...`,
+      details: trimmed,
+    };
+  }
+  return { summary: trimmed };
+}
+
+function determineBlockMessage(message: string): boolean {
+  if (!message) {
+    return false;
+  }
+  if (message.length > 160 || message.includes("\n")) {
+    return true;
+  }
+  if (/<[a-z!]/i.test(message)) {
+    return true;
+  }
+  return message.split(/\s+/).some((chunk) => chunk.length > 80);
+}
+
 function CallLog({ calls, loading }: { calls: ObservabilityCall[]; loading: boolean }): JSX.Element {
   return (
     <section className="space-y-3 rounded border border-slate-800 bg-slate-900 p-4">
@@ -671,7 +721,11 @@ function CallEntry({ call }: { call: ObservabilityCall }): JSX.Element {
       {call.run_id && (
         <p className="text-slate-400">Run: <span className="font-mono text-slate-200">{call.run_id}</span></p>
       )}
-      <p className="text-slate-200">{call.message}</p>
+      {determineBlockMessage(call.message) ? (
+        <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-all rounded border border-slate-800 bg-slate-950/40 p-2 text-slate-200">{call.message}</pre>
+      ) : (
+        <p className="text-slate-200 whitespace-pre-wrap break-words">{call.message}</p>
+      )}
       {payload && (
         <details className="rounded border border-slate-800 bg-slate-950/60">
           <summary className="cursor-pointer px-2 py-1 text-slate-400 hover:text-slate-200">Payload</summary>
