@@ -143,6 +143,7 @@ def build_observability_snapshot(
     """Assemble a near-real-time snapshot for the observability dashboard."""
 
     manager = get_log_manager()
+    session_started_at = manager.session_started_at
     runtime_logs = manager.get_logs(limit=limit, log_type="runtime", start=start, end=end)
     prompt_logs = manager.get_logs(limit=limit, log_type="prompts", start=start, end=end)
 
@@ -237,6 +238,7 @@ def build_observability_snapshot(
 
     return ObservabilityResponse(
         generated_at=datetime.now(timezone.utc),
+        session_started_at=session_started_at,
         nodes=nodes,
         edges=edges,
         calls=calls,

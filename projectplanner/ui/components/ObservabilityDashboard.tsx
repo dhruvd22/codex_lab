@@ -49,7 +49,7 @@ const LEVEL_COLORS: Record<string, string> = {
   CRITICAL: "text-rose-400",
 };
 
-type TimeRangePreset = "all" | "15m" | "1h" | "24h" | "7d";
+type TimeRangePreset = "all" | "15m" | "1h" | "24h" | "7d" | "custom";
 
 const TIME_RANGE_OPTIONS: Array<{ value: TimeRangePreset; label: string }> = [
   { value: "all", label: "All time" },
@@ -57,24 +57,34 @@ const TIME_RANGE_OPTIONS: Array<{ value: TimeRangePreset; label: string }> = [
   { value: "1h", label: "Last hour" },
   { value: "24h", label: "Last 24 hours" },
   { value: "7d", label: "Last 7 days" },
+  { value: "custom", label: "Custom range" },
 ];
 
 const CALL_LIMIT = 120;
 const REFRESH_INTERVAL_MS = 10000;
 
-function resolveTimeWindow(range: TimeRangePreset): { start?: string; end?: string } {
+function resolveTimeWindow(
+  range: TimeRangePreset,
+  options: { sessionStart?: string | null; customWindow?: { start?: string; end?: string } } = {},
+): { start?: string; end?: string } {
   if (range === "all") {
-    return {};
+    const start = options.sessionStart ?? undefined;
+    return start ? { start } : {};
+  }
+  if (range === "custom") {
+    const start = options.customWindow?.start ?? options.sessionStart ?? undefined;
+    const end = options.customWindow?.end ?? undefined;
+    return { start, end };
   }
   const now = new Date();
   const end = now.toISOString();
-  const offsets: Record<Exclude<TimeRangePreset, "all">, number> = {
+  const offsets: Record<Exclude<TimeRangePreset, "all" | "custom">, number> = {
     "15m": 15 * 60 * 1000,
     "1h": 60 * 60 * 1000,
     "24h": 24 * 60 * 60 * 1000,
     "7d": 7 * 24 * 60 * 60 * 1000,
   };
-  const startMs = now.getTime() - offsets[range as Exclude<TimeRangePreset, "all">];
+  const startMs = now.getTime() - offsets[range as Exclude<TimeRangePreset, "all" | "custom">];
   return { start: new Date(startMs).toISOString(), end };
 }
 
@@ -86,10 +96,19 @@ export function ObservabilityDashboard(): JSX.Element {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
   const [timeRange, setTimeRange] = useState<TimeRangePreset>("all");
+  const [sessionStartedAt, setSessionStartedAt] = useState<string | null>(null);
+  const [customWindow, setCustomWindow] = useState<{ start?: string; end?: string }>({});
+  const [customStartInput, setCustomStartInput] = useState<string>("");
+  const [customEndInput, setCustomEndInput] = useState<string>("");
+  const [customError, setCustomError] = useState<string | null>(null);
+  const hasCustomWindow = Boolean(customWindow.start || customWindow.end);
 
   const loadSnapshot = useCallback(async () => {
     setLoading(true);
-    const window = resolveTimeWindow(timeRange);
+    const window = resolveTimeWindow(timeRange, {
+      sessionStart: sessionStartedAt ?? undefined,
+      customWindow,
+    });
     try {
       const data = await fetchObservabilitySnapshot({
         calls: CALL_LIMIT,
@@ -97,6 +116,7 @@ export function ObservabilityDashboard(): JSX.Element {
         end: window.end,
       });
       setSnapshot(data);
+      setSessionStartedAt((current) => (current === data.session_started_at ? current : data.session_started_at));
       setError(null);
       setSelectedModule((current) => {
         if (current && data.nodes.some((node) => node.id === current)) {
@@ -109,11 +129,22 @@ export function ObservabilityDashboard(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [timeRange]);
+  }, [timeRange, sessionStartedAt, customWindow]);
 
   useEffect(() => {
     void loadSnapshot();
   }, [loadSnapshot]);
+
+  useEffect(() => {
+    if (timeRange !== "custom" || !sessionStartedAt || hasCustomWindow) {
+      return;
+    }
+    const startIso = sessionStartedAt;
+    const endIso = new Date().toISOString();
+    setCustomStartInput((current) => current || toLocalInputValue(startIso));
+    setCustomEndInput((current) => current || toLocalInputValue(endIso));
+    setCustomWindow({ start: startIso, end: endIso });
+  }, [timeRange, sessionStartedAt, hasCustomWindow]);
 
   useEffect(() => {
     if (!autoRefresh) {
@@ -183,7 +214,10 @@ export function ObservabilityDashboard(): JSX.Element {
   const lastGenerated = snapshot ? formatDateTime(snapshot.generated_at) : null;
 
   const handleDownload = useCallback(async () => {
-    const window = resolveTimeWindow(timeRange);
+    const window = resolveTimeWindow(timeRange, {
+      sessionStart: sessionStartedAt ?? undefined,
+      customWindow,
+    });
     setIsDownloading(true);
     try {
       const blob = await downloadObservabilitySnapshot({
@@ -206,7 +240,25 @@ export function ObservabilityDashboard(): JSX.Element {
     } finally {
       setIsDownloading(false);
     }
-  }, [timeRange]);
+  }, [timeRange, sessionStartedAt, customWindow]);
+
+  const applyCustomRange = useCallback(() => {
+    const startIso = fromLocalInputValue(customStartInput);
+    const endIso = fromLocalInputValue(customEndInput);
+    if (startIso && endIso && new Date(startIso) > new Date(endIso)) {
+      setCustomError("Start must be before end.");
+      return;
+    }
+    setCustomError(null);
+    const nextWindow: { start?: string; end?: string } = {};
+    if (startIso) {
+      nextWindow.start = startIso;
+    }
+    if (endIso) {
+      nextWindow.end = endIso;
+    }
+    setCustomWindow(nextWindow);
+  }, [customStartInput, customEndInput]);
 
   return (
     <section className="space-y-6">
@@ -214,6 +266,11 @@ export function ObservabilityDashboard(): JSX.Element {
         <div className="space-y-1">
           <h2 className="text-lg font-semibold text-slate-100">Observability</h2>
           <p className="text-sm text-slate-400">Track workflow components, latency, and recent module activity.</p>
+          {sessionStartedAt && (
+            <p className="text-xs text-slate-500">
+              Session started <span className="font-mono text-slate-300">{formatDateTime(sessionStartedAt)}</span>
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3 text-xs text-slate-400">
           <div className="flex items-center gap-2">
@@ -221,7 +278,14 @@ export function ObservabilityDashboard(): JSX.Element {
             <select
               id="observability-window"
               value={timeRange}
-              onChange={(event) => setTimeRange(event.target.value as TimeRangePreset)}
+              onChange={(event) => {
+                const value = event.target.value as TimeRangePreset;
+                setTimeRange(value);
+                setCustomError(null);
+                if (value === "custom") {
+                  setAutoRefresh(false);
+                }
+              }}
               className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100"
             >
               {TIME_RANGE_OPTIONS.map((option) => (
@@ -262,6 +326,42 @@ export function ObservabilityDashboard(): JSX.Element {
           >
             {loading ? "Refreshing..." : "Refresh"}
           </button>
+          {timeRange === "custom" && (
+            <div className="flex w-full flex-wrap items-center justify-end gap-2">
+              <label htmlFor="observability-custom-start">From</label>
+              <input
+                id="observability-custom-start"
+                type="datetime-local"
+                value={customStartInput}
+                onChange={(event) => {
+                  setCustomStartInput(event.target.value);
+                  setCustomError(null);
+                }}
+                className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100"
+              />
+              <label htmlFor="observability-custom-end">To</label>
+              <input
+                id="observability-custom-end"
+                type="datetime-local"
+                value={customEndInput}
+                onChange={(event) => {
+                  setCustomEndInput(event.target.value);
+                  setCustomError(null);
+                }}
+                className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100"
+              />
+              <button
+                type="button"
+                onClick={applyCustomRange}
+                className="rounded border border-slate-700 bg-slate-900 px-3 py-1 text-xs font-medium text-slate-200 transition hover:border-emerald-500 hover:text-emerald-300"
+              >
+                Apply
+              </button>
+            </div>
+          )}
+          {timeRange === "custom" && customError && (
+            <span className="w-full text-right text-rose-300">{customError}</span>
+          )}
         </div>
       </header>
       {error && <div className="rounded border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</div>}
@@ -580,6 +680,29 @@ function CallEntry({ call }: { call: ObservabilityCall }): JSX.Element {
       )}
     </div>
   );
+}
+
+function toLocalInputValue(iso?: string | null): string {
+  if (!iso) {
+    return "";
+  }
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function fromLocalInputValue(value?: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+  return date.toISOString();
 }
 
 function formatDateTime(value?: string | null): string {

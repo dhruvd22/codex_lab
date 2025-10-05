@@ -144,6 +144,7 @@ export type ObservabilityCall = {
 
 export type ObservabilitySnapshot = {
   generated_at: string;
+  session_started_at: string;
   nodes: ObservabilityNode[];
   edges: ObservabilityEdge[];
   calls: ObservabilityCall[];
@@ -424,5 +425,6 @@ export async function downloadObservabilitySnapshot(
   }
   return await response.blob();
 }
+
 
 

@@ -14,11 +14,27 @@ from typing import Any, Deque, Dict, Mapping, MutableMapping, Optional, Sequence
 
 JSONValue = Union[str, int, float, bool, None, list["JSONValue"], Dict[str, "JSONValue"]]
 
-_DEFAULT_CAPACITY = 2000
-try:
-    _DEFAULT_CAPACITY = max(256, int(os.getenv("PROJECTPLANNER_LOG_CAPACITY", "2000")))
-except (TypeError, ValueError):
-    _DEFAULT_CAPACITY = 2000
+def _resolve_capacity(value: Optional[str]) -> Optional[int]:
+    """Translate configuration input into an optional log buffer capacity."""
+
+    if value is None:
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    normalized = candidate.lower()
+    if normalized in {"0", "none", "unbounded", "infinite", "inf", "all"}:
+        return None
+    try:
+        parsed = int(candidate)
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return max(256, parsed)
+
+
+_DEFAULT_CAPACITY = _resolve_capacity(os.getenv("PROJECTPLANNER_LOG_CAPACITY"))
 
 try:
     _PROMPT_PREVIEW_LIMIT = int(os.getenv("PROJECTPLANNER_LOG_PROMPT_PREVIEW", "600"))
@@ -104,15 +120,17 @@ def _coerce_datetime(value: Any) -> Optional[datetime]:
 
 
 class InMemoryLogHandler(logging.Handler):
-    """Logging handler that keeps a bounded in-memory buffer."""
+    """Logging handler that keeps an in-memory buffer for the current session."""
 
-    def __init__(self, capacity: int = _DEFAULT_CAPACITY) -> None:
+    def __init__(self, capacity: Optional[int] = _DEFAULT_CAPACITY) -> None:
         super().__init__()
-        self.capacity = capacity
-        self._buffer: Deque[dict[str, Any]] = deque(maxlen=capacity)
+        resolved_capacity = capacity if capacity and capacity > 0 else None
+        self.capacity = resolved_capacity
+        self._buffer: Deque[dict[str, Any]] = deque(maxlen=resolved_capacity)
         self._lock = RLock()
         self._sequence = 0
         self._formatter = logging.Formatter()
+        self._session_started = datetime.now(timezone.utc)
 
     def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - exercised via integrations
         try:
@@ -185,12 +203,17 @@ class InMemoryLogHandler(logging.Handler):
         with self._lock:
             self._buffer.clear()
             self._sequence = 0
+            self._session_started = datetime.now(timezone.utc)
+
+    @property
+    def session_started_at(self) -> datetime:
+        return self._session_started
 
 
 class LogManager:
     """Coordinator for shared logging state across modules."""
 
-    def __init__(self, capacity: int = _DEFAULT_CAPACITY) -> None:
+    def __init__(self, capacity: Optional[int] = _DEFAULT_CAPACITY) -> None:
         self.handler = InMemoryLogHandler(capacity)
         self._lock = RLock()
         self._configured = False
@@ -199,6 +222,10 @@ class LogManager:
     @property
     def configured(self) -> bool:
         return self._configured
+
+    @property
+    def session_started_at(self) -> datetime:
+        return self.handler.session_started_at
 
     def configure(
         self,
@@ -531,3 +558,4 @@ __all__ = [
     "is_function_call_logging_enabled",
     "log_prompt",
 ]
+

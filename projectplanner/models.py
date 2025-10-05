@@ -227,6 +227,7 @@ class ObservabilityResponse(BaseModel):
     """Snapshot returned to populate the observability dashboard."""
 
     generated_at: datetime = Field(..., description="Timestamp when the snapshot was generated.")
+    session_started_at: datetime = Field(..., description="Timestamp when the logging session began.")
     nodes: List[ObservabilityNode] = Field(..., description="Modules participating in the workflow.")
     edges: List[ObservabilityEdge] = Field(..., description="Directed relationships between modules.")
     calls: List[ObservabilityCall] = Field(default_factory=list, description="Recent module invocations used for drill-down.")
