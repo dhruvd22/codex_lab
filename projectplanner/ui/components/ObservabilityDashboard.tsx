@@ -358,7 +358,7 @@ function FlowList({ flows }: { flows: FlowItem[] }): JSX.Element {
             }`}
           >
             <span className="font-semibold">{flow.sourceName}</span>
-            <span className="text-slate-500">-></span>
+            <span className="text-slate-500">{'->'}</span>
             <span className="font-semibold">{flow.targetName}</span>
             {flow.label && <span className="text-slate-400">({flow.label})</span>}
           </li>

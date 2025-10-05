@@ -6,6 +6,8 @@ Projectplanner ingests research and solution design documents, normalizes the so
 ## Architecture summary
 Multi-agent workflow with a deterministic Planner -> Decomposer -> Reviewer graph, orchestrated in code rather than loose chat loops. FastAPI serves the API, the Next.js UI wraps the review and edit surface, SQLite powers local storage, and you can plug in Postgres + pgvector for embeddings when you need scale. Deterministic graph execution combined with durable orchestration keeps outputs stable and avoids flaky "agent chatter."
 
+The module now ships with a built-in observability layer. Every Agent, API surface, and storage hop emits structured logs that are collected into an interactive UI dashboard and a `/observability` API snapshot so you can spot latency regressions or unhealthy modules before shipping changes.
+
 ## Install & Run
 1. Clone the repo, create a virtual environment, and install the API module.
    ```bash
@@ -65,6 +67,10 @@ Copy the template and edit values before running (`cp projectplanner/.env.exampl
 - `PUT /api/projectplanner/steps/{run_id}` and `GET /api/projectplanner/steps/{run_id}`
   - **Request** (`PUT`): `{ "steps": PromptStep[] }`
   - **Response**: `{ "run_id": string, "steps": PromptStep[] }`
+- `GET /api/projectplanner/observability`
+  - **Query**: `limit` (runtime log sample size, default 400), `calls` (recent module call limit, default 120).
+  - **Response**: `{ "generated_at": string, "nodes": ObservabilityNode[], "edges": ObservabilityEdge[], "calls": ObservabilityCall[] }` representing the live workflow graph.
+
 - `POST /api/projectplanner/export`
   - **Request**: `{ "run_id": string, "format": "yaml" | "jsonl" | "md" }`
   - **Response**: streamed attachment matching the requested format with `Content-Disposition: attachment`.
@@ -81,6 +87,14 @@ Copy the template and edit values before running (`cp projectplanner/.env.exampl
 2. Click **Generate Plan** to start the stream and watch the Planner, Decomposer, and Reviewer progress.
 3. Inspect milestones and edit any step titles, prompts, or acceptance criteria inline.
 4. Export your refined plan as YAML, JSONL, or Markdown for the downstream agent.
+5. Hop into the **Observability** tab to monitor module health, latency trends, and the latest calls for each component.
+
+### Observability dashboard
+- Grouped cards show **Endpoints**, **Pipeline**, **Storage**, **Agents**, and **Services** with live status derived from recent log levels.
+- Latency metrics (`avg_latency_ms`, `p95_latency_ms`, `last_latency_ms`) are computed from paired start/end events per module.
+- The flow list highlights upstream/downstream edges touching the selected module so you can follow execution.
+- The call log surfaces the most recent runtime and prompt events, including payload previews, run ids, and severity levels.
+- Auto-refresh is enabled by default (10 second interval) and can be toggled while you investigate a noisy run.
 
 ## Export formats
 - **YAML** — canonical hierarchy with `plan`, `steps`, and optional `report` blocks.
@@ -96,6 +110,9 @@ Copy the template and edit values before running (`cp projectplanner/.env.exampl
 - `plan.milestones`: high-level sequencing.
 - `steps[].expected_artifacts`: files or docs we expect back.
 - `steps[].acceptance_criteria`: quality bar to auto-evaluate agent outputs.
+- `observability.nodes[]`: per-module health, event counts, recent run ids, and derived latency stats.
+- `observability.edges[]`: directional relationships between modules (source -> target).
+- `observability.calls[]`: recent log-derived invocations including level, event, payload preview, and run association.
 
 Example YAML export snippet:
 ```yaml
