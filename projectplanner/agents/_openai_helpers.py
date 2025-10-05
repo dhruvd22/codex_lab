@@ -1,4 +1,4 @@
-﻿"""Utility helpers for invoking OpenAI chat completions with backward compatibility."""
+"""Utility helpers for invoking OpenAI chat completions with backward compatibility."""
 from __future__ import annotations
 
 from typing import Any, Dict, Mapping, Sequence
@@ -133,11 +133,20 @@ def create_chat_completion(
     if client is None:
         raise RuntimeError("OpenAI client is unavailable.")
 
+    def _extract_parameter_names(option: Mapping[str, Any]) -> list[str]:
+        names: list[str] = []
+        for key, value in option.items():
+            if key == "extra_body" and isinstance(value, Mapping):
+                names.extend(str(inner_key) for inner_key in value.keys())
+            else:
+                names.append(str(key))
+        return names
+
     attempts = (
-        {"max_output_tokens": max_tokens},
-        {"extra_body": {"max_output_tokens": max_tokens}},
         {"max_completion_tokens": max_tokens},
         {"extra_body": {"max_completion_tokens": max_tokens}},
+        {"max_output_tokens": max_tokens},
+        {"extra_body": {"max_output_tokens": max_tokens}},
         {"max_tokens": max_tokens},
         {},  # final fallback relies on server defaults
     )
@@ -150,6 +159,7 @@ def create_chat_completion(
         retry_without_temperature = False
         for extra in attempts:
             kwargs: Dict[str, Any] = {"model": model, "messages": normalized_messages}
+            attempted_param_names = _extract_parameter_names(extra)
             if include_temperature:
                 kwargs["temperature"] = temperature
             try:
@@ -169,13 +179,19 @@ def create_chat_completion(
                     break
                 if (
                     "use 'max_completion_tokens' instead" in lowered
-                    and "max_tokens" in extra
+                    and any(name == "max_tokens" for name in attempted_param_names)
                 ):
                     last_error = exc
                     continue
                 if (
                     "use 'max_output_tokens'" in lowered
-                    and ("max_completion_tokens" in extra or "extra_body" in extra)
+                    and any(name == "max_completion_tokens" for name in attempted_param_names)
+                ):
+                    last_error = exc
+                    continue
+                if (
+                    "unknown parameter" in lowered
+                    and any(name.lower() in lowered for name in attempted_param_names)
                 ):
                     last_error = exc
                     continue
