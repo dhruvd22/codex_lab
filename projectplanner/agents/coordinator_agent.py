@@ -24,6 +24,7 @@ LOGGER = get_logger(__name__)
 
 DEFAULT_COORDINATOR_MODEL = os.getenv("PROJECTPLANNER_COORDINATOR_MODEL", "gpt-5")
 MAX_CONTEXT_CHARS = 18000
+COORDINATOR_COMPLETION_TOKEN_ATTEMPTS = (900, 1500)
 
 COORDINATOR_SYSTEM_PROMPT = (
     "You are Agent 0, the lead project coordinator for an AI execution graph. "
@@ -150,52 +151,77 @@ class CoordinatorAgent:
     def _request_objectives(self, payload: CoordinatorAgentInput, user_prompt: str) -> str:
         if not self._client:
             raise RuntimeError("OpenAI client unavailable for coordinator agent.")
-        response = create_chat_completion(
-            self._client,
-            model=self._model,
-            messages=[
-                {"role": "system", "content": COORDINATOR_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.2,
-            max_tokens=900,
-        )
-        response_metadata = extract_choice_metadata(response)
-        response_metadata.update(
-            {
-                "style": payload.style,
-                "chunk_count": len(payload.chunks),
-            }
-        )
-        if not response.choices:
-            response_metadata["reason"] = "no_choices"
+        attempts = list(COORDINATOR_COMPLETION_TOKEN_ATTEMPTS)
+        for attempt_index, max_tokens in enumerate(attempts):
+            response = create_chat_completion(
+                self._client,
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": COORDINATOR_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.2,
+                max_tokens=max_tokens,
+            )
+            response_metadata = extract_choice_metadata(response)
+            response_metadata.update(
+                {
+                    "style": payload.style,
+                    "chunk_count": len(payload.chunks),
+                    "attempt": attempt_index + 1,
+                    "max_tokens": max_tokens,
+                }
+            )
+            if not response.choices:
+                response_metadata["reason"] = "no_choices"
+                log_prompt(
+                    agent="CoordinatorAgent",
+                    role="assistant",
+                    prompt="",
+                    run_id=payload.run_id,
+                    stage="response",
+                    model=self._model,
+                    metadata=response_metadata,
+                )
+                raise ValueError("Coordinator model returned no choices.")
+            message = response.choices[0].message
+            content = extract_message_content(message)
+            response_metadata["has_content"] = bool(content)
+            if message is not None:
+                response_metadata.setdefault("message", message)
             log_prompt(
                 agent="CoordinatorAgent",
                 role="assistant",
-                prompt="",
+                prompt=content or "",
                 run_id=payload.run_id,
                 stage="response",
                 model=self._model,
                 metadata=response_metadata,
             )
-            raise ValueError("Coordinator model returned no choices.")
-        message = response.choices[0].message
-        content = extract_message_content(message)
-        response_metadata["has_content"] = bool(content)
-        if message is not None:
-            response_metadata.setdefault("message", message)
-        log_prompt(
-            agent="CoordinatorAgent",
-            role="assistant",
-            prompt=content or "",
-            run_id=payload.run_id,
-            stage="response",
-            model=self._model,
-            metadata=response_metadata,
-        )
-        if not content:
-            details = []
+            if content:
+                return content
             finish_reason = response_metadata.get("finish_reason")
+            should_retry = (
+                finish_reason == "length"
+                and attempt_index < len(attempts) - 1
+            )
+            if should_retry:
+                LOGGER.warning(
+                    "Coordinator response truncated; retrying with higher token limit (attempt %s).",
+                    attempt_index + 2,
+                    extra={
+                        "event": "agent.coordinator.retry_length",
+                        "run_id": payload.run_id,
+                        "payload": {
+                            "attempt": attempt_index + 1,
+                            "max_tokens": max_tokens,
+                            "next_max_tokens": attempts[attempt_index + 1],
+                            "finish_reason": finish_reason,
+                        },
+                    },
+                )
+                continue
+            details = []
             if finish_reason:
                 details.append(f"finish_reason={finish_reason}")
             if response_metadata.get("refusal"):
@@ -205,7 +231,7 @@ class CoordinatorAgent:
                 details.append(f"id={response_id}")
             suffix = f" ({', '.join(details)})" if details else ""
             raise ValueError(f"Coordinator model returned empty content{suffix}.")
-        return content
+        raise ValueError("Coordinator model returned empty content (all retry attempts exhausted).")
 
     def _build_user_prompt(self, payload: CoordinatorAgentInput, context: str) -> str:
         stack = payload.target_stack
