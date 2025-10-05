@@ -19,6 +19,73 @@ A deployable Project Planner experience driven by a FastAPI backend, SQLAlchemy 
 |- requirements.txt           # Python dependencies for API + static delivery
 ```
 
+## Architecture Overview
+Project Planner pairs a FastAPI backend with a statically exported Next.js UI. The backend coordinates document ingestion, multi-agent planning, persistent storage, and the observability layer that powers the live dashboard and log APIs.
+
+- `projectplanner/ui` builds the Next.js front-end and exports static assets that FastAPI serves from `app/main.py`.
+- `app/main.py` bootstraps FastAPI, mounts the UI, adds CORS + rate limiting middleware, and exposes the `/api/projectplanner/*` routes.
+- `projectplanner/services` hosts ingestion, planning, export, observability, and storage services that encapsulate domain logic.
+- `projectplanner/agents` contains the deterministic Coordinator -> Planner -> Decomposer -> Reviewer agent chain responsible for producing project plans and quality reports.
+- `projectplanner/logging_utils.py` centralizes structured runtime logging, prompt tracing, and in-memory buffers consumed by the observability features.
+
+```
++----------------------+        +-----------------------------+
+|  Browser (Next.js)   |<------>|  Static UI build (`ui/out`) |
++----------+-----------+        +-------------+---------------+
+           | HTTPS & SSE calls                |
+           v                                   | served by
++-------------------------------------------------------------+
+| FastAPI app (`app/main.py`)                                    |
+| - CORS, rate limiting, tracing middleware                      |
+| - Router `/api/projectplanner/*`                               |
+| - StaticFiles mount for exported UI bundles                    |
++-----------+-------------------------+-------------------------+
+            |                         |                         |
+            |                         |                         |
+            v                         v                         v
+   +--------------------+   +---------------------+   +---------------------+
+   | Ingestion service  |   | Planning service    |   | Observability svc   |
+   +----------+---------+   +----------+----------+   +----------+----------+
+              |                    orchestrates agents                |
+              v                           |                           |
+     +---------------------+              v                           |
+     | ProjectPlannerStore |<---+  +---------------------------+      |
+     |                     |    |  | Agents (`agents/*`)       |      |
+     | SQLite / Postgres   |    |  | Coordinator -> Planner -> |      |
+     +---------+-----------+    |  | Decomposer -> Reviewer    |      |
+               |                |  +---------------------------+      |
+               | persists runs, |                                   consumes
+               | chunks, plans  |                                   structured logs
+               v                v                                         v
+        +-------------------------------+                    +-----------------------+
+        | Export bundle builder         |                    | Logging buffers & API |
+        | (YAML / JSONL / Markdown)     |                    | (`logging_utils`)     |
+        +-------------------------------+                    +-----------------------+
+```
+
+The UI and agents both leverage the shared logging utilities so runtime metrics, prompt transcripts, and recent module calls surface through `GET /api/projectplanner/logs` and `/observability`.
+
+## Execution Flow
+### Document ingestion
+1. The UI (or an API client) submits a document to `POST /api/projectplanner/ingest`, providing inline text, a URL, or a previously uploaded file id.
+2. `projectplanner.services.ingest.ingest_document` loads and normalizes the source, collapses extraneous whitespace, and chunks the text with configured size and overlap thresholds.
+3. Each chunk is deduplicated and embedded. When `OPENAI_API_KEY` is present, the service requests OpenAI embeddings; otherwise it falls back to a deterministic hash-based vector so downstream workflows still function.
+4. `ProjectPlannerStore` persists the run metadata, chunk payloads, and embeddings to the configured database (SQLite by default, Postgres when `DATABASE_URL` is set).
+5. The endpoint responds with a `run_id` and stats (`word_count`, `char_count`, `chunk_count`) that the UI uses to enable planning actions.
+
+### Planning & review stream
+1. The UI calls `POST /api/projectplanner/plan` with the `run_id` (and optional style/target stack). FastAPI returns a server-sent events stream.
+2. `projectplanner.services.plan.planning_event_stream` validates the run, pulls stored chunks, and boots the generator that yields lifecycle events.
+3. The Coordinator agent synthesizes ordered objectives, followed by the Planner agent generating milestone-aligned steps. The Decomposer enriches each step with prompts, inputs, and expected artifacts, and the Reviewer grades the plan, emitting strengths and concerns.
+4. After every phase, results are written back through `ProjectPlannerStore` so the UI and exports share a consistent source of truth. The stream emits `*_started`/`*_completed` events plus a `final_plan` payload summarizing the persisted plan, steps, and reviewer report.
+5. Export requests (`POST /api/projectplanner/export`) reuse the stored plan/steps/report bundle to produce YAML, JSONL, or Markdown downloads without re-running the agents.
+
+### UI orchestration & observability
+1. The statically exported Next.js UI consumes the SSE stream to drive progress indicators, then allows inline editing of stored steps via `PUT /api/projectplanner/steps/{run_id}`.
+2. The observability dashboard queries `GET /api/projectplanner/logs` and `/observability` on intervals, rendering module health, recent runtime events, and prompt transcripts sourced from `logging_utils` buffers.
+3. Shared logging decorators capture ingestion, planning, storage, and export events, enabling consistent debugging signals whether you interact through the UI or the API.
+
+
 ## Local Development
 1. **Python environment**
    ```powershell
