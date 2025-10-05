@@ -50,7 +50,7 @@ services:
 ## Environment variables
 Copy the template and edit values before running (`cp projectplanner/.env.example projectplanner/.env`).
 - **OPENAI_API_KEY** — required for agent calls and embeddings.
-- **PROJECTPLANNER_COORDINATOR_MAX_COMPLETION_TOKENS** � optional upper bound for the coordinator's completion tokens (defaults to 4096).
+- **PROJECTPLANNER_MAX_COMPLETION_TOKENS** - optional upper bound for agent completion tokens (defaults to 4096).
 - **DATABASE_URL** — optional Postgres connection string (e.g. `postgresql://user:pass@host:5432/db`).
 - **USE_PGVECTOR** — optional; set to `true` to enable pgvector support.
 - **NEXT_PUBLIC_API_URL** — the UI’s base URL for the API (e.g. `http://localhost:8000`).

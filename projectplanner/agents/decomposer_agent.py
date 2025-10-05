@@ -14,6 +14,7 @@ from projectplanner.agents._openai_helpers import (
 )
 from projectplanner.logging_utils import get_logger, log_prompt
 from projectplanner.models import MilestoneObjective, PromptStep
+from projectplanner.config import MAX_COMPLETION_TOKENS
 
 try:  # pragma: no cover - optional dependency guard
     from openai import OpenAI
@@ -226,7 +227,7 @@ class DecomposerAgent:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.25,
-            max_tokens=1100,
+            max_tokens=MAX_COMPLETION_TOKENS,
         )
         response_metadata = extract_choice_metadata(response)
         response_metadata.update(

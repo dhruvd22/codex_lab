@@ -14,6 +14,7 @@ from projectplanner.agents._openai_helpers import (
     extract_message_content,
 )
 from projectplanner.models import MilestoneObjective
+from projectplanner.config import MAX_COMPLETION_TOKENS
 
 try:  # pragma: no cover - optional dependency guard
     from openai import OpenAI
@@ -25,32 +26,18 @@ LOGGER = get_logger(__name__)
 DEFAULT_COORDINATOR_MODEL = os.getenv("PROJECTPLANNER_COORDINATOR_MODEL", "gpt-5")
 MAX_CONTEXT_CHARS = 18000
 _DEFAULT_COORDINATOR_COMPLETION_TOKEN_ATTEMPTS = (900, 1500, 2200)
-_DEFAULT_COORDINATOR_MAX_COMPLETION_TOKENS = 4096
+
 
 
 def _resolve_coordinator_completion_token_attempts() -> tuple[int, ...]:
-    """Return ascending completion token attempts with optional environment override."""
-    raw_max = os.getenv("PROJECTPLANNER_COORDINATOR_MAX_COMPLETION_TOKENS")
     candidates = list(_DEFAULT_COORDINATOR_COMPLETION_TOKEN_ATTEMPTS)
-    resolved_max: int | None = None
-    if raw_max:
-        try:
-            resolved_max = int(raw_max)
-        except ValueError:
-            LOGGER.warning(
-                "Invalid PROJECTPLANNER_COORDINATOR_MAX_COMPLETION_TOKENS=%s; using default %s.",
-                raw_max,
-                _DEFAULT_COORDINATOR_MAX_COMPLETION_TOKENS,
-                extra={"event": "agent.coordinator.invalid_max_tokens"},
-            )
-    if resolved_max is None:
-        resolved_max = _DEFAULT_COORDINATOR_MAX_COMPLETION_TOKENS
-    candidates.append(resolved_max)
+    candidates.append(MAX_COMPLETION_TOKENS)
     normalized = sorted({value for value in candidates if value and value > 0})
     return tuple(normalized)
 
 
 COORDINATOR_COMPLETION_TOKEN_ATTEMPTS = _resolve_coordinator_completion_token_attempts()
+
 
 COORDINATOR_SYSTEM_PROMPT = (
     "You are Agent 0, the lead project coordinator for an AI execution graph. "

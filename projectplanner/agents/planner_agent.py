@@ -15,6 +15,7 @@ from projectplanner.agents._openai_helpers import (
 )
 from projectplanner.logging_utils import get_logger, log_prompt
 from projectplanner.models import PromptPlan
+from projectplanner.config import MAX_COMPLETION_TOKENS
 
 try:  # pragma: no cover - optional dependency guard
     from openai import OpenAI
@@ -187,7 +188,7 @@ class PlannerAgent:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.2,
-            max_tokens=900,
+            max_tokens=MAX_COMPLETION_TOKENS,
         )
         response_metadata = extract_choice_metadata(response)
         response_metadata.update(
