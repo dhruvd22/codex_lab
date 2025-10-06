@@ -220,8 +220,13 @@ export function PromptLogPanel(): JSX.Element {
         currentHasResponse = false;
       }
 
-      current.entries.push(timelineEntry);
-      current.latestAt = entry.timestamp;
+      const activeInteraction = current;
+      if (!activeInteraction) {
+        continue;
+      }
+
+      activeInteraction.entries.push(timelineEntry);
+      activeInteraction.latestAt = entry.timestamp;
 
       if (stage === "response") {
         currentHasResponse = true;
@@ -429,3 +434,4 @@ export function PromptLogPanel(): JSX.Element {
     </section>
   );
 }
+
