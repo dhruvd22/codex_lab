@@ -24,7 +24,7 @@ export function AppLayout({ children }: { children: ReactNode }): JSX.Element {
                   : "bg-slate-800 text-slate-200 hover:bg-slate-700"
               }`}
             >
-              Planner
+              Conductor
             </button>
             <button
               type="button"
@@ -103,3 +103,4 @@ export function AppLayout({ children }: { children: ReactNode }): JSX.Element {
     </div>
   );
 }
+

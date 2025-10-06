@@ -16,6 +16,26 @@ type PromptPayload = {
   metadata?: unknown;
 };
 
+type PromptKind = "prompt" | "embedding";
+
+type PromptTimelineEntry = {
+  log: LogEntry;
+  payload: PromptPayload;
+  kind: PromptKind;
+};
+
+type PromptInteraction = {
+  id: string;
+  agent: string;
+  runId: string | null;
+  startedAt: string;
+  latestAt: string;
+  entries: PromptTimelineEntry[];
+  kind: PromptKind;
+};
+
+type PromptCategoryFilter = "all" | "prompts" | "embeddings";
+
 function formatTimestamp(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -66,6 +86,8 @@ export function PromptLogPanel(): JSX.Element {
   const [isLoading, setIsLoading] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<PromptCategoryFilter>("all");
+  const [agentFilter, setAgentFilter] = useState<string>("all");
   const cursorRef = useRef<number | null>(null);
 
   const loadPrompts = useCallback(
@@ -142,7 +164,120 @@ export function PromptLogPanel(): JSX.Element {
     }
   }, []);
 
-  const renderedEntries = useMemo(() => entries.slice().reverse(), [entries]);
+  const interactions = useMemo(() => {
+    if (entries.length === 0) {
+      return [] as PromptInteraction[];
+    }
+    const sorted = [...entries].sort((a, b) => a.sequence - b.sequence);
+    const result: PromptInteraction[] = [];
+    let current: PromptInteraction | null = null;
+    let currentHasResponse = false;
+
+    const flushCurrent = () => {
+      if (!current || current.entries.length === 0) {
+        current = null;
+        currentHasResponse = false;
+        return;
+      }
+      const kind: PromptKind = current.entries.some((item) => item.kind === "prompt") ? "prompt" : "embedding";
+      const lastEntry = current.entries[current.entries.length - 1];
+      current.kind = kind;
+      current.latestAt = lastEntry.log.timestamp;
+      result.push(current);
+      current = null;
+      currentHasResponse = false;
+    };
+
+    for (const entry of sorted) {
+      const payload = parsePromptPayload(entry);
+      const kind: PromptKind =
+        payload.role === "embedding" || payload.agent === "EmbeddingService" ? "embedding" : "prompt";
+      const agent = payload.agent || entry.logger;
+      const runId = entry.run_id ?? null;
+      const stage = (payload.stage ?? "").toLowerCase();
+      const timelineEntry: PromptTimelineEntry = {
+        log: entry,
+        payload,
+        kind,
+      };
+      const shouldStartNew =
+        current === null ||
+        current.agent !== agent ||
+        current.runId !== runId ||
+        (currentHasResponse && stage === "request");
+
+      if (shouldStartNew) {
+        flushCurrent();
+        current = {
+          id: `${entry.sequence}`,
+          agent,
+          runId,
+          startedAt: entry.timestamp,
+          latestAt: entry.timestamp,
+          entries: [],
+          kind,
+        };
+        currentHasResponse = false;
+      }
+
+      current.entries.push(timelineEntry);
+      current.latestAt = entry.timestamp;
+
+      if (stage === "response") {
+        currentHasResponse = true;
+        flushCurrent();
+      }
+    }
+
+    flushCurrent();
+
+    return result;
+  }, [entries]);
+
+  const agentOptions = useMemo(() => {
+    const seen = new Set<string>();
+    for (const interaction of interactions) {
+      const trimmed = interaction.agent.trim();
+      if (trimmed) {
+        seen.add(trimmed);
+      }
+    }
+    return Array.from(seen).sort((a, b) => a.localeCompare(b));
+  }, [interactions]);
+
+  useEffect(() => {
+    if (agentFilter !== "all" && !agentOptions.includes(agentFilter)) {
+      setAgentFilter("all");
+    }
+  }, [agentFilter, agentOptions]);
+
+  const filteredInteractions = useMemo(() => {
+    const subset = interactions.filter((interaction) => {
+      const matchesCategory =
+        categoryFilter === "all" ||
+        (categoryFilter === "prompts" && interaction.kind === "prompt") ||
+        (categoryFilter === "embeddings" && interaction.kind === "embedding");
+      if (!matchesCategory) {
+        return false;
+      }
+      if (agentFilter !== "all" && interaction.agent !== agentFilter) {
+        return false;
+      }
+      return true;
+    });
+    const sorted = [...subset];
+    sorted.sort((a, b) => {
+      const aSeq = a.entries.length > 0 ? a.entries[a.entries.length - 1].log.sequence : 0;
+      const bSeq = b.entries.length > 0 ? b.entries[b.entries.length - 1].log.sequence : 0;
+      return bSeq - aSeq;
+    });
+    return sorted;
+  }, [interactions, categoryFilter, agentFilter]);
+
+  const visibleEntryCount = useMemo(
+    () => filteredInteractions.reduce((total, interaction) => total + interaction.entries.length, 0),
+    [filteredInteractions],
+  );
 
   return (
     <section className="space-y-4">
@@ -163,6 +298,27 @@ export function PromptLogPanel(): JSX.Element {
             />
             Auto refresh
           </label>
+          <select
+            value={categoryFilter}
+            onChange={(event) => setCategoryFilter(event.target.value as PromptCategoryFilter)}
+            className="rounded border border-slate-700 bg-slate-900 px-3 py-1 text-xs text-slate-200 transition hover:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+          >
+            <option value="all">All entries</option>
+            <option value="prompts">Agent prompts</option>
+            <option value="embeddings">Embedding calls</option>
+          </select>
+          <select
+            value={agentFilter}
+            onChange={(event) => setAgentFilter(event.target.value)}
+            className="rounded border border-slate-700 bg-slate-900 px-3 py-1 text-xs text-slate-200 transition hover:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+          >
+            <option value="all">All agents</option>
+            {agentOptions.map((agent) => (
+              <option key={agent} value={agent}>
+                {agent}
+              </option>
+            ))}
+          </select>
           <button
             type="button"
             onClick={() => void handleDownload()}
@@ -185,68 +341,86 @@ export function PromptLogPanel(): JSX.Element {
         <div className="rounded border border-rose-500/40 bg-rose-900/30 px-3 py-2 text-sm text-rose-200">{error}</div>
       )}
       <p className="text-sm text-slate-400">
-        Showing {renderedEntries.length} of {MAX_PROMPT_ENTRIES} entries.
+        Showing {filteredInteractions.length} of {interactions.length} prompt exchanges ({visibleEntryCount} log events retained).
       </p>
       <div className="space-y-3">
-        {renderedEntries.map((entry) => {
-          const payload = parsePromptPayload(entry);
-          const metadataRecord = toRecord(payload.metadata);
-          let metadataText: string | null = null;
-          if (metadataRecord) {
-            try {
-              metadataText = JSON.stringify(metadataRecord, null, 2);
-            } catch (caught) {
-              metadataText = `Unable to render metadata: ${(caught as Error).message}`;
-            }
-          } else if (payload.metadata !== undefined && payload.metadata !== null) {
-            metadataText = String(payload.metadata);
-          }
-          return (
-            <article
-              key={entry.sequence}
-              className="rounded border border-slate-800 bg-slate-900/70 p-4 shadow-sm shadow-slate-950/60"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
-                <span>{formatTimestamp(entry.timestamp)}</span>
-                <div className="flex items-center gap-2 text-emerald-300">
-                  {payload.stage && <span className="uppercase">{payload.stage}</span>}
-                  {payload.role && <span className="uppercase text-slate-300">{payload.role}</span>}
-                  {entry.event && <span className="text-slate-500">{entry.event}</span>}
-                </div>
+        {filteredInteractions.map((interaction) => (
+          <article
+            key={interaction.id}
+            className="rounded border border-slate-800 bg-slate-900/70 p-4 shadow-sm shadow-slate-950/60"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400">
+              <div>
+                <p className="text-sm font-semibold text-slate-100">{interaction.agent}</p>
+                <p className="text-xs text-slate-500">Run: {interaction.runId ?? "-"}</p>
               </div>
-              <div className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-100">
-                {payload.preview || "(no content captured)"}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded bg-slate-800 px-2 py-0.5 text-[0.65rem] uppercase tracking-wide text-slate-200">
+                  {interaction.kind === "embedding" ? "Embeddings" : "Prompt"}
+                </span>
+                <span>{interaction.entries.length} events</span>
+                <span>{formatTimestamp(interaction.latestAt)}</span>
               </div>
-              {payload.truncated && (
-                <p className="mt-1 text-xs text-amber-300">Preview truncated. Download the audit log to read the full text.</p>
-              )}
-              <dl className="mt-3 grid gap-x-6 gap-y-2 text-xs text-slate-400 sm:grid-cols-2">
-                <div>
-                  <dt className="font-medium text-slate-300">Agent</dt>
-                  <dd>{payload.agent}</dd>
-                </div>
-                <div>
-                  <dt className="font-medium text-slate-300">Run</dt>
-                  <dd>{entry.run_id ?? "-"}</dd>
-                </div>
-                <div>
-                  <dt className="font-medium text-slate-300">Model</dt>
-                  <dd>{payload.model ?? "-"}</dd>
-                </div>
-                <div>
-                  <dt className="font-medium text-slate-300">Characters</dt>
-                  <dd>{payload.chars ?? payload.preview.length}</dd>
-                </div>
-              </dl>
-              {metadataText && (
-                <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-slate-950/60 p-2 text-xs text-slate-200">
-                  {metadataText}
-                </pre>
-              )}
-            </article>
-          );
-        })}
-        {renderedEntries.length === 0 && !isLoading && (
+            </div>
+            <div className="mt-3 space-y-3">
+              {interaction.entries.map((item) => {
+                const metadataRecord = toRecord(item.payload.metadata);
+                let metadataText: string | null = null;
+                if (metadataRecord) {
+                  try {
+                    metadataText = JSON.stringify(metadataRecord, null, 2);
+                  } catch (caught) {
+                    metadataText = `Unable to render metadata: ${(caught as Error).message}`;
+                  }
+                } else if (item.payload.metadata !== undefined && item.payload.metadata !== null) {
+                  metadataText = String(item.payload.metadata);
+                }
+                const stageLabel = (item.payload.stage ?? "").toUpperCase();
+                const roleLabel = (item.payload.role ?? "").toUpperCase();
+                return (
+                  <div
+                    key={item.log.sequence}
+                    className="rounded border border-slate-800 bg-slate-950/40 p-3"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {stageLabel && <span className="font-semibold text-emerald-300">{stageLabel}</span>}
+                        {roleLabel && <span className="text-slate-300">{roleLabel}</span>}
+                        {item.payload.model && <span className="text-slate-500">{item.payload.model}</span>}
+                        {item.log.event && <span className="text-slate-500">{item.log.event}</span>}
+                      </div>
+                      <span>{formatTimestamp(item.log.timestamp)}</span>
+                    </div>
+                    <div className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-100">
+                      {item.payload.preview || "(no content captured)"}
+                    </div>
+                    {item.payload.truncated && (
+                      <p className="mt-1 text-xs text-amber-300">
+                        Preview truncated. Download the audit log to read the full text.
+                      </p>
+                    )}
+                    <dl className="mt-3 grid gap-x-6 gap-y-2 text-xs text-slate-400 sm:grid-cols-2">
+                      <div>
+                        <dt className="font-medium text-slate-300">Characters</dt>
+                        <dd>{item.payload.chars ?? item.payload.preview.length}</dd>
+                      </div>
+                      <div>
+                        <dt className="font-medium text-slate-300">Sequence</dt>
+                        <dd>#{item.log.sequence}</dd>
+                      </div>
+                    </dl>
+                    {metadataText && (
+                      <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-slate-950/60 p-2 text-xs text-slate-200">
+                        {metadataText}
+                      </pre>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </article>
+        ))}
+        {filteredInteractions.length === 0 && !isLoading && (
           <div className="rounded border border-slate-800 bg-slate-900/60 p-6 text-center text-sm text-slate-400">
             No prompt activity captured yet. Run the planner to gather prompt telemetry.
           </div>

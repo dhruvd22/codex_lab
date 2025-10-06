@@ -82,8 +82,9 @@ The UI and agents both leverage the shared logging utilities so runtime metrics,
 
 ### UI orchestration & observability
 1. The statically exported Next.js UI consumes the SSE stream to drive progress indicators, then allows inline editing of stored steps via `PUT /api/codingconductor/steps/{run_id}`.
-2. The observability dashboard queries `GET /api/codingconductor/logs` and `/observability` on intervals, rendering module health, recent runtime events, and prompt transcripts sourced from `logging_utils` buffers.
-3. Shared logging decorators capture ingestion, planning, storage, and export events, enabling consistent debugging signals whether you interact through the UI or the API.
+2. The Prompts tab groups each request/response exchange so completions sit beside their initiating prompts, and it now offers filters for embeddings vs conversational prompts plus an agent picker to isolate traffic from a specific worker.
+3. The observability dashboard queries `GET /api/codingconductor/logs` and `/observability` on intervals, rendering module health, recent runtime events, and prompt transcripts sourced from `logging_utils` buffers.
+4. Shared logging decorators capture ingestion, planning, storage, and export events, enabling consistent debugging signals whether you interact through the UI or the API.
 
 
 ## Local Development
