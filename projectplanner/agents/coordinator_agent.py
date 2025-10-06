@@ -24,7 +24,7 @@ except Exception:  # pragma: no cover
 LOGGER = get_logger(__name__)
 
 DEFAULT_COORDINATOR_MODEL = os.getenv("PROJECTPLANNER_COORDINATOR_MODEL", "gpt-5")
-MAX_CONTEXT_CHARS = 18000
+MAX_CONTEXT_CHARS = 150_000
 
 def _resolve_coordinator_completion_token_attempts() -> tuple[int, ...]:
     return (MAX_COMPLETION_TOKENS,)
@@ -35,12 +35,13 @@ COORDINATOR_COMPLETION_TOKEN_ATTEMPTS = _resolve_coordinator_completion_token_at
 
 COORDINATOR_SYSTEM_PROMPT = (
     "You are Agent 0, the lead project coordinator for an AI execution graph. "
-    "Analyze the provided research excerpts and return an ordered list of milestones that, when completed, deliver the requested application. "
-    "Milestones must be outcome-oriented, objective, and reference tangible deliverables. "
+    "Review solution and design documents to extract a concise set of actionable milestone titles that downstream AI builders can execute. "
+    "Each milestone must describe concrete outcomes, surface required deliverables, and sequence work so the requested application can be delivered end-to-end. "
     "Respond strictly with JSON that matches the schema: {\"milestones\": [{\"id\": \"m01\", \"title\": \"...\", \"objective\": \"...\", \"success_criteria\": [\"...\"], \"dependencies\": []}]}. "
     "Use lowercase identifiers that satisfy ^[a-z0-9-]+$ and do not add commentary. "
-    "Return between four and seven milestones."
+    "Return between four and seven milestones that unlock the desired solution."
 )
+
 
 
 class CoordinatorAgent:
@@ -88,50 +89,79 @@ class CoordinatorAgent:
         objectives: List[MilestoneObjective] = []
         used_model = False
         if self._client:
-            context = self._compress_chunks(payload.chunks)
-            user_prompt = self._build_user_prompt(payload, context)
+            contexts = self._prepare_context_variants(payload.chunks)
             log_prompt(
                 agent="CoordinatorAgent",
                 role="system",
                 prompt=COORDINATOR_SYSTEM_PROMPT,
                 run_id=payload.run_id,
                 model=self._model,
-                metadata={"style": payload.style},
+                metadata={"style": payload.style, "context_variants": len(contexts)},
             )
-            log_prompt(
-                agent="CoordinatorAgent",
-                role="user",
-                prompt=user_prompt,
-                run_id=payload.run_id,
-                model=self._model,
-                metadata={"style": payload.style, "chunk_count": len(payload.chunks)},
-            )
-            try:
-                raw = self._request_objectives(payload, user_prompt)
-                parsed = self._parse_objectives(raw)
-                if parsed:
-                    objectives = parsed
-                    used_model = True
-                    LOGGER.info(
-                        "Coordinator agent received %s GPT objectives",
-                        len(objectives),
-                        extra={
-                            "event": "agent.coordinator.gpt_success",
-                            "run_id": payload.run_id,
-                            "payload": {"count": len(objectives)},
-                        },
-                    )
-            except Exception as error:  # pragma: no cover - rely on fallback below
-                LOGGER.warning(
-                    "Coordinator GPT synthesis failed; reverting to heuristic objectives. (%s)",
-                    error,
-                    extra={
-                        "event": "agent.coordinator.gpt_failure",
-                        "run_id": payload.run_id,
-                        "payload": {"error": str(error), "error_type": type(error).__name__},
+            for variant_index, (context, truncated) in enumerate(contexts):
+                context_label = "truncated" if truncated else "full"
+                user_prompt = self._build_user_prompt(payload, context, truncated)
+                log_prompt(
+                    agent="CoordinatorAgent",
+                    role="user",
+                    prompt=user_prompt,
+                    run_id=payload.run_id,
+                    model=self._model,
+                    metadata={
+                        "style": payload.style,
+                        "chunk_count": len(payload.chunks),
+                        "context_chars": len(context),
+                        "context_mode": context_label,
+                        "context_attempt": variant_index + 1,
+                        "context_variants": len(contexts),
                     },
                 )
-                objectives = []
+                try:
+                    raw = self._request_objectives(payload, user_prompt)
+                    parsed = self._parse_objectives(raw)
+                    if parsed:
+                        objectives = parsed
+                        used_model = True
+                        LOGGER.info(
+                            "Coordinator agent received %s GPT objectives",
+                            len(objectives),
+                            extra={
+                                "event": "agent.coordinator.gpt_success",
+                                "run_id": payload.run_id,
+                                "payload": {
+                                    "count": len(objectives),
+                                    "context_mode": context_label,
+                                    "context_chars": len(context),
+                                },
+                            },
+                        )
+                        break
+                except Exception as error:  # pragma: no cover - rely on fallback below
+                    retry_note = (
+                        "retrying with compressed context"
+                        if variant_index < len(contexts) - 1
+                        else "reverting to heuristic objectives"
+                    )
+                    LOGGER.warning(
+                        "Coordinator GPT synthesis failed using %s context; %s. (%s)",
+                        context_label,
+                        retry_note,
+                        error,
+                        extra={
+                            "event": "agent.coordinator.gpt_failure",
+                            "run_id": payload.run_id,
+                            "payload": {
+                                "error": str(error),
+                                "error_type": type(error).__name__,
+                                "context_mode": context_label,
+                                "context_chars": len(context),
+                                "context_attempt": variant_index + 1,
+                                "context_variants": len(contexts),
+                                "style": payload.style,
+                            },
+                        },
+                    )
+                    objectives = []
         if not objectives:
             objectives = self._fallback_objectives(payload)
         if not used_model:
@@ -240,13 +270,27 @@ class CoordinatorAgent:
             raise ValueError(f"Coordinator model returned empty content{suffix}.")
         raise ValueError("Coordinator model returned empty content (all retry attempts exhausted).")
 
-    def _build_user_prompt(self, payload: CoordinatorAgentInput, context: str) -> str:
+    def _prepare_context_variants(self, chunks: Sequence[str]) -> List[tuple[str, bool]]:
+        full_context = "\n\n".join(chunks)
+        contexts: List[tuple[str, bool]] = [(full_context, False)]
+        if len(full_context) > MAX_CONTEXT_CHARS:
+            compressed = self._compress_chunks(chunks)
+            if compressed != full_context:
+                contexts.append((compressed, True))
+        return contexts
+
+    def _build_user_prompt(self, payload: CoordinatorAgentInput, context: str, truncated: bool) -> str:
         stack = payload.target_stack
+        context_header = (
+            "Document excerpts (normalized; full source context):\n"
+            if not truncated
+            else f"Document excerpts (normalized; truncated to {MAX_CONTEXT_CHARS:,} characters):\n"
+        )
         return (
             f"Run ID: {payload.run_id}\n"
             f"Target stack: backend={stack.backend}, frontend={stack.frontend}, database={stack.db}\n"
             f"Planning style: {payload.style}\n"
-            "Document excerpts (normalized and truncated to 18k characters):\n"
+            f"{context_header}"
             '"""\n'
             f"{context}\n"
             '"""\n'
