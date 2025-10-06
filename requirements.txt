@@ -7,7 +7,6 @@ pypdf==3.17.0
 python-docx==0.8.11
 python-dotenv==1.0.0
 openai==1.12.0
-pgvector==0.2.4
 psycopg[binary]==3.1.18
 aiofiles==23.2.1
 

@@ -1,10 +1,8 @@
 ﻿"""Document ingestion utilities."""
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
-import os
 import re
 import uuid
 from dataclasses import dataclass
@@ -15,7 +13,7 @@ from typing import List, Optional, Sequence, Tuple
 from projectplanner.models import DocumentStats, IngestionRequest, IngestionResponse
 from projectplanner.services.store import ProjectPlannerStore, StoredChunk
 
-from projectplanner.logging_utils import get_logger, log_prompt
+from projectplanner.logging_utils import get_logger
 
 CHUNK_CHAR_LIMIT = 1200
 CHUNK_OVERLAP = 200
@@ -82,11 +80,10 @@ async def ingest_document(payload: IngestionRequest, *, store: ProjectPlannerSto
             "payload": {"chunk_count": len(chunks), "unique_count": len(unique_chunks)},
         },
     )
-    embeddings = await _embed_chunks(unique_chunks, run_id=run_id)
 
     stored_chunks = [
-        StoredChunk(idx=i, text=chunk, embedding=embedding, metadata={"source": source})
-        for i, (chunk, embedding) in enumerate(zip(unique_chunks, embeddings))
+        StoredChunk(idx=i, text=chunk, metadata={"source": source})
+        for i, chunk in enumerate(unique_chunks)
     ]
 
     stats = DocumentStats(
@@ -261,77 +258,5 @@ def _count_words(text: str) -> int:
     return words
 
 
-async def _embed_chunks(chunks: Sequence[str], run_id: Optional[str]) -> List[Optional[List[float]]]:
-    loop = asyncio.get_running_loop()
-    LOGGER.debug(
-        "Embedding %s chunks",
-        len(chunks),
-        extra={"event": "ingest.embedding.start", "run_id": run_id, "payload": {"count": len(chunks)}},
-    )
-    tasks = [
-        loop.run_in_executor(None, _embed_text, chunk, run_id, idx)
-        for idx, chunk in enumerate(chunks)
-    ]
-    results = await asyncio.gather(*tasks)
-    LOGGER.debug(
-        "Embedding finished for %s chunks",
-        len(chunks),
-        extra={"event": "ingest.embedding.complete", "run_id": run_id, "payload": {"count": len(chunks)}},
-    )
-    return results
 
 
-def _embed_text(text: str, run_id: Optional[str] = None, index: Optional[int] = None) -> Optional[List[float]]:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        digest = hashlib.sha256(text.encode("utf-8")).digest()
-        LOGGER.debug(
-            "Embedding fallback (hash) used for chunk %s",
-            index,
-            extra={
-                "event": "ingest.embedding.hash",
-                "run_id": run_id,
-                "payload": {"index": index},
-            },
-        )
-        return [int(b) / 255.0 for b in digest[:64]]
-    try:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=api_key)
-        log_prompt(
-            agent="EmbeddingService",
-            role="embedding",
-            prompt=text,
-            run_id=run_id,
-            model="text-embedding-3-small",
-            metadata={"index": index},
-        )
-        response = client.embeddings.create(input=[text], model="text-embedding-3-small")
-        vector = list(response.data[0].embedding)
-        metadata = {"index": index, "vector_length": len(vector)}
-        response_id = getattr(response, "id", None)
-        if response_id:
-            metadata["response_id"] = response_id
-        log_prompt(
-            agent="EmbeddingService",
-            role="embedding",
-            prompt="[embedding vector]",
-            run_id=run_id,
-            stage="response",
-            model="text-embedding-3-small",
-            metadata=metadata,
-        )
-        return vector
-    except Exception as error:
-        LOGGER.warning(
-            "Embedding request failed for chunk %s (%s)",
-            index,
-            error,
-            extra={
-                "event": "ingest.embedding.failure",
-                "run_id": run_id,
-                "payload": {"index": index, "error": str(error), "error_type": type(error).__name__},
-            },
-        )
-        return None

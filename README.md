@@ -69,8 +69,8 @@ The UI and agents both leverage the shared logging utilities so runtime metrics,
 ### Document ingestion
 1. The UI (or an API client) uploads a blueprint file to `POST /api/codingconductor/ingest`. The payload supplies a base64-encoded document, the original filename, and an optional parser hint.
 2. `projectplanner.services.ingest.ingest_document` decodes the blueprint, normalizes whitespace, and chunks the content with configured size and overlap thresholds.
-3. Each chunk is deduplicated and embedded. When `OPENAI_API_KEY` is present, the service requests OpenAI embeddings; otherwise it falls back to a deterministic hash-based vector so downstream workflows still function.
-4. `ProjectPlannerStore` persists the run metadata, chunk payloads, and embeddings to the configured database (SQLite by default, Postgres when `DATABASE_URL` is set).
+3. Each chunk is deduplicated and stored as normalized text so downstream agents can operate on a consistent blueprint without any embedding service.
+4. `ProjectPlannerStore` persists the run metadata and chunk payloads to the configured database (SQLite by default, Postgres when `DATABASE_URL` is set).
 5. The endpoint responds with a `run_id` and stats (`word_count`, `char_count`, `chunk_count`) that the UI uses to enable planning actions.
 
 ### Planning & review stream
@@ -82,7 +82,7 @@ The UI and agents both leverage the shared logging utilities so runtime metrics,
 
 ### UI orchestration & observability
 1. The statically exported Next.js UI consumes the SSE stream to drive progress indicators, then allows inline editing of stored steps via `PUT /api/codingconductor/steps/{run_id}`.
-2. The Prompts tab groups each request/response exchange so completions sit beside their initiating prompts, and it now offers filters for embeddings vs conversational prompts plus an agent picker to isolate traffic from a specific worker.
+2. The Prompts tab groups each request/response exchange so completions sit beside their initiating prompts, and an agent picker helps isolate traffic from a specific worker.
 3. The observability dashboard queries `GET /api/codingconductor/logs` and `/observability` on intervals, rendering module health, recent runtime events, and prompt transcripts sourced from `logging_utils` buffers.
 4. Shared logging decorators capture ingestion, planning, storage, and export events, enabling consistent debugging signals whether you interact through the UI or the API.
 

@@ -4,7 +4,7 @@
 The Coding Conductor ingests architecture, design, and requirements blueprints, normalizes the source into actionable context, and emits a sequential, high-signal prompt plan tailored for autonomous AI coding agents. Feed it system briefs, RFCs, or discovery notes and it returns a run book the agent can execute without backtracking.
 
 ## Architecture summary
-Multi-agent workflow with a deterministic Planner -> Decomposer -> Reviewer graph, orchestrated in code rather than loose chat loops. FastAPI serves the API, the Next.js UI wraps the review and edit surface, SQLite powers local storage, and you can plug in Postgres + pgvector for embeddings when you need scale. Deterministic graph execution combined with durable orchestration keeps outputs stable and avoids flaky "agent chatter."
+Multi-agent workflow with a deterministic Planner -> Decomposer -> Reviewer graph, orchestrated in code rather than loose chat loops. FastAPI serves the API, the Next.js UI wraps the review and edit surface, and SQLite handles local storage with optional Postgres when you need scale. Deterministic graph execution combined with durable orchestration keeps outputs stable and avoids flaky "agent chatter."
 
 The module now ships with a built-in observability layer. Every Agent, API surface, and storage hop emits structured logs that are collected into an interactive UI dashboard and a `/observability` API snapshot so you can spot latency regressions or unhealthy modules before shipping changes.
 
@@ -49,10 +49,9 @@ services:
 
 ## Environment variables
 Copy the template and edit values before running (`cp projectplanner/.env.example projectplanner/.env`).
-- **OPENAI_API_KEY** — required for agent calls and embeddings.
+- **OPENAI_API_KEY** — required for agent calls.
 - **CODING_CONDUCTOR_MAX_COMPLETION_TOKENS** - optional upper bound for agent completion tokens (defaults to 16384).
 - **DATABASE_URL** — optional Postgres connection string (e.g. `postgresql://user:pass@host:5432/db`).
-- **USE_PGVECTOR** — optional; set to `true` to enable pgvector support.
 - **NEXT_PUBLIC_API_URL** — the UI’s base URL for the API (e.g. `http://localhost:8000`).
 - **LANGFUSE_PUBLIC_KEY**, **LANGFUSE_SECRET_KEY** — optional observability keys if you wire up Langfuse.
 
@@ -154,11 +153,10 @@ promptfoo eval -c projectplanner/evals/promptfoo.yaml
 ## Cost controls
 - Planning agents run at temperature `0` with bounded `max_tokens`.
 - Decomposer halts early if reviewer rubric drops below the acceptance threshold.
-- Embedding calls chunk documents once and reuse cached vectors.
 
 ## Security
 - No secrets checked into source control; all keys read via environment variables.
-- FastAPI request path only calls OpenAI (for planning) and embeddings provider.
+- FastAPI request path only calls OpenAI for planning.
 - Postgres credentials stay in `.env`; sanitize anything before logging.
 
 ## CI hooks

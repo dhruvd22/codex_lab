@@ -16,12 +16,10 @@ type PromptPayload = {
   metadata?: unknown;
 };
 
-type PromptKind = "prompt" | "embedding";
 
 type PromptTimelineEntry = {
   log: LogEntry;
   payload: PromptPayload;
-  kind: PromptKind;
 };
 
 type PromptInteraction = {
@@ -31,10 +29,8 @@ type PromptInteraction = {
   startedAt: string;
   latestAt: string;
   entries: PromptTimelineEntry[];
-  kind: PromptKind;
 };
 
-type PromptCategoryFilter = "all" | "prompts" | "embeddings";
 
 function formatTimestamp(value: string): string {
   const date = new Date(value);
@@ -86,7 +82,6 @@ export function PromptLogPanel(): JSX.Element {
   const [isLoading, setIsLoading] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [categoryFilter, setCategoryFilter] = useState<PromptCategoryFilter>("all");
   const [agentFilter, setAgentFilter] = useState<string>("all");
   const cursorRef = useRef<number | null>(null);
 
@@ -179,9 +174,7 @@ export function PromptLogPanel(): JSX.Element {
         currentHasResponse = false;
         return;
       }
-      const kind: PromptKind = current.entries.some((item) => item.kind === "prompt") ? "prompt" : "embedding";
       const lastEntry = current.entries[current.entries.length - 1];
-      current.kind = kind;
       current.latestAt = lastEntry.log.timestamp;
       result.push(current);
       current = null;
@@ -190,15 +183,12 @@ export function PromptLogPanel(): JSX.Element {
 
     for (const entry of sorted) {
       const payload = parsePromptPayload(entry);
-      const kind: PromptKind =
-        payload.role === "embedding" || payload.agent === "EmbeddingService" ? "embedding" : "prompt";
       const agent = payload.agent || entry.logger;
       const runId = entry.run_id ?? null;
       const stage = (payload.stage ?? "").toLowerCase();
       const timelineEntry: PromptTimelineEntry = {
         log: entry,
         payload,
-        kind,
       };
       const shouldStartNew =
         current === null ||
@@ -215,7 +205,6 @@ export function PromptLogPanel(): JSX.Element {
           startedAt: entry.timestamp,
           latestAt: entry.timestamp,
           entries: [],
-          kind,
         };
         currentHasResponse = false;
       }
@@ -258,13 +247,6 @@ export function PromptLogPanel(): JSX.Element {
 
   const filteredInteractions = useMemo(() => {
     const subset = interactions.filter((interaction) => {
-      const matchesCategory =
-        categoryFilter === "all" ||
-        (categoryFilter === "prompts" && interaction.kind === "prompt") ||
-        (categoryFilter === "embeddings" && interaction.kind === "embedding");
-      if (!matchesCategory) {
-        return false;
-      }
       if (agentFilter !== "all" && interaction.agent !== agentFilter) {
         return false;
       }
@@ -277,7 +259,7 @@ export function PromptLogPanel(): JSX.Element {
       return bSeq - aSeq;
     });
     return sorted;
-  }, [interactions, categoryFilter, agentFilter]);
+  }, [interactions, agentFilter]);
 
   const visibleEntryCount = useMemo(
     () => filteredInteractions.reduce((total, interaction) => total + interaction.entries.length, 0),
@@ -303,15 +285,6 @@ export function PromptLogPanel(): JSX.Element {
             />
             Auto refresh
           </label>
-          <select
-            value={categoryFilter}
-            onChange={(event) => setCategoryFilter(event.target.value as PromptCategoryFilter)}
-            className="rounded border border-slate-700 bg-slate-900 px-3 py-1 text-xs text-slate-200 transition hover:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-          >
-            <option value="all">All entries</option>
-            <option value="prompts">Agent prompts</option>
-            <option value="embeddings">Embedding calls</option>
-          </select>
           <select
             value={agentFilter}
             onChange={(event) => setAgentFilter(event.target.value)}
@@ -361,7 +334,7 @@ export function PromptLogPanel(): JSX.Element {
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded bg-slate-800 px-2 py-0.5 text-[0.65rem] uppercase tracking-wide text-slate-200">
-                  {interaction.kind === "embedding" ? "Embeddings" : "Prompt"}
+                  Prompt
                 </span>
                 <span>{interaction.entries.length} events</span>
                 <span>{formatTimestamp(interaction.latestAt)}</span>
@@ -434,4 +407,3 @@ export function PromptLogPanel(): JSX.Element {
     </section>
   );
 }
-

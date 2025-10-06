@@ -1,7 +1,6 @@
 ﻿"""Persistence layer for the coding conductor module."""
 from __future__ import annotations
 
-import json
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -47,7 +46,6 @@ class ChunkRecord(Base):
     run_id = Column(String, ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True)
     idx = Column(Integer, nullable=False)
     text = Column(Text, nullable=False)
-    embedding = Column(Text, nullable=True)
     metadata_json = Column("metadata", JSON, nullable=True)
 
     run = relationship("RunRecord", back_populates="chunks")
@@ -103,7 +101,6 @@ class StoredChunk:
 
     idx: int
     text: str
-    embedding: Optional[List[float]]
     metadata: Optional[dict]
 
 
@@ -175,7 +172,6 @@ class ProjectPlannerStore:
                         run_id=run_id,
                         idx=chunk.idx,
                         text=chunk.text,
-                        embedding=json.dumps(chunk.embedding) if chunk.embedding else None,
                         metadata_json=chunk.metadata,
                     )
                 )
@@ -199,7 +195,6 @@ class ProjectPlannerStore:
             StoredChunk(
                 idx=r.idx,
                 text=r.text,
-                embedding=json.loads(r.embedding) if r.embedding else None,
                 metadata=r.metadata_json,
             )
             for r in records

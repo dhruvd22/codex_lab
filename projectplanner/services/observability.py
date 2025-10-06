@@ -46,19 +46,18 @@ MODULE_DEFINITIONS: Sequence[ModuleDefinition] = (
         id="ingestion_pipeline",
         name="Ingestion Pipeline",
         category="pipeline",
-        description="Normalizes input, chunks content, and prepares embeddings.",
+        description="Normalizes input and chunks content for downstream planning.",
         event_prefixes=("ingest.",),
         logger_prefixes=("projectplanner.services.ingest",),
         duration_pairs=(("ingest.start", "ingest.complete"),),
     ),
     ModuleDefinition(
-        id="vector_store",
-        name="Vector Store",
+        id="document_store",
+        name="Document Store",
         category="storage",
-        description="Persists chunks, embeddings, and retrieved context for runs.",
-        event_prefixes=("store.", "ingest.embedding."),
+        description="Persists normalized chunks and run artifacts for planning.",
+        event_prefixes=("store.",),
         logger_prefixes=("projectplanner.services.store",),
-        prompt_agents=("EmbeddingService",),
     ),
     ModuleDefinition(
         id="api_plan",
@@ -120,16 +119,16 @@ MODULE_DEFINITIONS: Sequence[ModuleDefinition] = (
 
 EDGE_DEFINITIONS: Sequence[Tuple[str, str, Optional[str]]] = (
     ("api_ingest", "ingestion_pipeline", "Document intake"),
-    ("ingestion_pipeline", "vector_store", "Persist context"),
-    ("vector_store", "api_plan", "Supply embeddings"),
+    ("ingestion_pipeline", "document_store", "Persist context"),
+    ("document_store", "api_plan", "Supply context"),
     ("api_plan", "coordinator_agent", "Launch objectives"),
     ("coordinator_agent", "planner_agent", "Share milestones"),
     ("planner_agent", "decomposer_agent", "Break into steps"),
     ("decomposer_agent", "reviewer_agent", "Send drafts"),
     ("reviewer_agent", "api_plan", "Return feedback"),
-    ("planner_agent", "vector_store", "Retrieve context"),
+    ("planner_agent", "document_store", "Store plan artifacts"),
     ("api_plan", "api_export", "Finalize outputs"),
-    ("vector_store", "api_export", "Read artifacts"),
+    ("document_store", "api_export", "Read artifacts"),
 )
 
 
