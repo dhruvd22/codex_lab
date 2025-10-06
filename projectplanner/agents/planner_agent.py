@@ -15,7 +15,7 @@ from projectplanner.agents._openai_helpers import (
 )
 from projectplanner.logging_utils import get_logger, log_prompt
 from projectplanner.models import PromptPlan
-from projectplanner.config import MAX_COMPLETION_TOKENS
+from projectplanner.config import MAX_COMPLETION_TOKENS, get_setting
 
 try:  # pragma: no cover - optional dependency guard
     from openai import OpenAI
@@ -24,12 +24,12 @@ except Exception:  # pragma: no cover
 
 LOGGER = get_logger(__name__)
 
-DEFAULT_PLANNER_MODEL = os.getenv("PROJECTPLANNER_PLANNER_MODEL", "gpt-5")
+DEFAULT_PLANNER_MODEL = get_setting("PLANNER_MODEL", "gpt-5")
 MAX_CONTEXT_CHARS = 18000
 
 PLANNER_SYSTEM_PROMPT = (
-    "You are Agent 1, the project planning specialist in an AI orchestrated workflow. "
-    "Using the coordinator's milestone objectives and the original research excerpts, produce a structured plan. "
+    "You are Agent 1, the strategic architect in an autonomous build orchestra. "
+    "Use the coordinator's milestone objectives and the blueprint excerpts to produce a structured application plan tuned for resilient, production-ready delivery. "
     "Respond strictly with JSON containing the keys: context (string), goals (list[str]), assumptions (list[str]), "
     "non_goals (list[str]), and risks (list[str]). Do not include additional keys or prose."
 )
@@ -47,7 +47,7 @@ class PlannerAgent:
     """Extracts a structured plan from normalized research chunks."""
 
     def __init__(self) -> None:
-        self._model = os.getenv("PROJECTPLANNER_PLANNER_MODEL", DEFAULT_PLANNER_MODEL)
+        self._model = get_setting("PLANNER_MODEL") or DEFAULT_PLANNER_MODEL
         self._client = None
         api_key = os.getenv("OPENAI_API_KEY")
         if api_key and OpenAI is not None:

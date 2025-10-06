@@ -14,7 +14,7 @@ from projectplanner.agents._openai_helpers import (
 )
 from projectplanner.logging_utils import get_logger, log_prompt
 from projectplanner.models import MilestoneObjective, PromptStep
-from projectplanner.config import MAX_COMPLETION_TOKENS
+from projectplanner.config import MAX_COMPLETION_TOKENS, get_setting
 
 try:  # pragma: no cover - optional dependency guard
     from openai import OpenAI
@@ -23,12 +23,12 @@ except Exception:  # pragma: no cover
 
 LOGGER = get_logger(__name__)
 
-DEFAULT_DECOMPOSER_MODEL = os.getenv("PROJECTPLANNER_DECOMPOSER_MODEL", "gpt-5")
+DEFAULT_DECOMPOSER_MODEL = get_setting("DECOMPOSER_MODEL", "gpt-5")
 MAX_CONTEXT_CHARS = 14000
 
 DECOMPOSER_SYSTEM_PROMPT = (
-    "You are Agent 2, the senior engineering lead preparing execution-ready prompts for an autonomous coding agent. "
-    "Use the provided milestone objective, project context, and prior milestone progress to craft instructions. "
+    "You are Agent 2, the senior engineering conductor preparing execution-ready prompts for an autonomous coding agent. "
+    "Use the provided milestone objective, application blueprint context, and prior milestone progress to craft instructions that drive robust, production-ready outcomes. "
     "Respond strictly with JSON containing keys: system_prompt (string), user_prompt (string), expected_artifacts (list[str]), "
     "acceptance_criteria (list[str]), inputs (list[str]), outputs (list[str]), tools (list[str]), token_budget (int)."
 )
@@ -38,7 +38,7 @@ class DecomposerAgent:
     """Transforms high-level milestones into sequenced PromptStep entries."""
 
     def __init__(self) -> None:
-        self._model = os.getenv("PROJECTPLANNER_DECOMPOSER_MODEL", DEFAULT_DECOMPOSER_MODEL)
+        self._model = get_setting("DECOMPOSER_MODEL") or DEFAULT_DECOMPOSER_MODEL
         self._client = None
         api_key = os.getenv("OPENAI_API_KEY")
         if api_key and OpenAI is not None:

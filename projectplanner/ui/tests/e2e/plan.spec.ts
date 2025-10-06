@@ -64,7 +64,7 @@ const sseBody = [
 test("planner export reflects edited title", async ({ page }) => {
   let latestSteps = planResponse.steps.map((step) => ({ ...step }));
 
-  await page.route("**/api/projectplanner/ingest", async (route) => {
+  await page.route("**/api/codingconductor/ingest", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -72,7 +72,7 @@ test("planner export reflects edited title", async ({ page }) => {
     });
   });
 
-  await page.route("**/api/projectplanner/plan", async (route) => {
+  await page.route("**/api/codingconductor/plan", async (route) => {
     await route.fulfill({
       status: 200,
       headers: {
@@ -83,7 +83,7 @@ test("planner export reflects edited title", async ({ page }) => {
     });
   });
 
-  await page.route(`**/api/projectplanner/steps/${planResponse.run_id}`, async (route) => {
+  await page.route(`**/api/codingconductor/steps/${planResponse.run_id}`, async (route) => {
     if (route.request().method() === "PUT") {
       const payload = route.request().postDataJSON() as { steps: typeof latestSteps };
       latestSteps = payload.steps.map((step) => ({ ...step }));
@@ -101,7 +101,7 @@ test("planner export reflects edited title", async ({ page }) => {
     });
   });
 
-  await page.route("**/api/projectplanner/export", async (route) => {
+  await page.route("**/api/codingconductor/export", async (route) => {
     const yaml = [
       "plan:",
       "  context: Modernize onboarding",
@@ -123,8 +123,13 @@ test("planner export reflects edited title", async ({ page }) => {
   const baseURL = test.info().project.use.baseURL ?? "http://localhost:3000";
   await page.goto(baseURL);
 
-  await page.fill('textarea[placeholder="Paste research or solution doc markdown here..."]', "Sample research");
-  await page.click('button:has-text("Ingest Document")');
+  await page.setInputFiles('input[type="file"]', {
+    name: 'blueprint.md',
+    mimeType: 'text/markdown',
+    buffer: Buffer.from('# Goals
+- Deliver fast'),
+  });
+  await page.click('button:has-text("Ingest Blueprint")');
   await expect(page.getByText(/Ingestion complete/i)).toBeVisible();
 
   await page.click('button:has-text("Generate Plan")');

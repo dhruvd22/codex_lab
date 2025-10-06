@@ -9,18 +9,13 @@ import re
 import uuid
 from dataclasses import dataclass
 from io import BytesIO
-from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
-import httpx
 
 from projectplanner.models import DocumentStats, IngestionRequest, IngestionResponse
 from projectplanner.services.store import ProjectPlannerStore, StoredChunk
 
 from projectplanner.logging_utils import get_logger, log_prompt
-
-UPLOAD_ROOT = (Path(__file__).resolve().parent / "../data/uploads").resolve()
-UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 
 CHUNK_CHAR_LIMIT = 1200
 CHUNK_OVERLAP = 200
@@ -47,7 +42,7 @@ class IngestionResult:
 
 
 async def ingest_document(payload: IngestionRequest, *, store: ProjectPlannerStore) -> IngestionResponse:
-    """Ingest content, persist chunks, and return run metadata."""
+    """Ingest blueprint content, persist chunks, and return run metadata."""
 
     run_id = str(uuid.uuid4())
     LOGGER.info(
@@ -57,15 +52,15 @@ async def ingest_document(payload: IngestionRequest, *, store: ProjectPlannerSto
             "event": "ingest.start",
             "run_id": run_id,
             "payload": {
-                "has_text": bool(payload.text),
-                "has_url": bool(payload.url),
-                "has_file": bool(payload.file_id),
+                "filename": payload.filename,
+                "format_hint": payload.format_hint,
+                "encoded": payload.blueprint.startswith("base64:"),
             },
         },
     )
-    raw_text, source = await _load_text(payload)
+    raw_text, source = _decode_blueprint(payload)
     LOGGER.info(
-        "Loaded source for run %s from %s",
+        "Loaded blueprint for run %s from %s",
         run_id,
         source,
         extra={
@@ -118,34 +113,20 @@ async def ingest_document(payload: IngestionRequest, *, store: ProjectPlannerSto
     return IngestionResponse(run_id=run_id, stats=stats)
 
 
-async def _load_text(payload: IngestionRequest) -> Tuple[str, str]:
-    if payload.text:
-        decoded = _maybe_decode_text(payload.text, payload.format_hint)
-        return decoded, "inline"
-    if payload.file_id:
-        return _load_from_file(payload.file_id, payload.format_hint), "upload"
-    if payload.url:
-        return await _load_from_url(str(payload.url), payload.format_hint), "url"
-    raise ValueError("No content source provided.")
+def _decode_blueprint(payload: IngestionRequest) -> Tuple[str, str]:
+    """Decode the submitted blueprint into plain text and describe its origin."""
 
-
-def _load_from_file(file_id: str, format_hint: Optional[str]) -> str:
-    path = UPLOAD_ROOT / file_id
-    if not path.exists():
-        raise FileNotFoundError(f"File {file_id} not found in uploads directory.")
-    raw = path.read_bytes()
-    suffix = path.suffix.lstrip(".") if path.suffix else None
-    LOGGER.debug(
-        "Loaded %s bytes from uploaded file %s",
-        len(raw),
-        file_id,
-        extra={"event": "ingest.file.load", "payload": {"file_id": file_id, "bytes": len(raw)}},
-    )
-    return _parse_by_format(raw, suffix or format_hint or "txt")
+    blueprint = payload.blueprint
+    decoded = _decode_blueprint_text(blueprint, payload.format_hint)
+    if blueprint.startswith("base64:"):
+        source = payload.filename or "uploaded-blueprint"
+    else:
+        source = payload.filename or "inline-blueprint"
+    return decoded, source
 
 
 
-def _maybe_decode_text(text: str, format_hint: Optional[str]) -> str:
+def _decode_blueprint_text(text: str, format_hint: Optional[str]) -> str:
     if text.startswith("base64:"):
         _, meta, encoded = text.split(":", 2)
         data = base64.b64decode(encoded)
@@ -164,37 +145,6 @@ def _maybe_decode_text(text: str, format_hint: Optional[str]) -> str:
     )
     return text
 
-
-async def _load_from_url(url: str, format_hint: Optional[str]) -> str:
-    LOGGER.info(
-        "Fetching ingestion content from %s",
-        url,
-        extra={"event": "ingest.fetch.start", "payload": {"url": url}},
-    )
-    async with httpx.AsyncClient(timeout=20) as client:
-        try:
-            response = await client.get(url)
-            response.raise_for_status()
-        except Exception:
-            LOGGER.warning(
-                "Failed to fetch ingestion content from %s",
-                url,
-                exc_info=True,
-                extra={"event": "ingest.fetch.error", "payload": {"url": url}},
-            )
-            raise
-    content_type = response.headers.get("content-type", "text/plain")
-    suffix = _infer_suffix_from_content_type(content_type)
-    LOGGER.info(
-        "Fetched %s bytes from %s",
-        len(response.content),
-        url,
-        extra={
-            "event": "ingest.fetch.complete",
-            "payload": {"url": url, "content_type": content_type},
-        },
-    )
-    return _parse_by_format(response.content, suffix or format_hint or "txt")
 
 
 def _infer_suffix_from_content_type(content_type: str) -> Optional[str]:

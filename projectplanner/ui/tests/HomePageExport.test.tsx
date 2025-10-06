@@ -123,12 +123,11 @@ describe("HomePage export flow", () => {
     const user = userEvent.setup();
     render(<HomePage />);
 
-    const textarea = screen.getByPlaceholderText(
-      "Paste research or solution doc markdown here...",
-    );
-    await user.type(textarea, "Sample research text");
+    const uploadInput = screen.getByLabelText(/Upload blueprint/i) as HTMLInputElement;
+    const file = new File(["Sample research text"], "blueprint.md", { type: "text/markdown" });
+    await user.upload(uploadInput, file);
 
-    await user.click(screen.getByRole("button", { name: "Ingest Document" }));
+    await user.click(screen.getByRole("button", { name: "Ingest Blueprint" }));
     await screen.findByText(/Ingestion complete/i);
 
     await user.click(screen.getByRole("button", { name: "Generate Plan" }));

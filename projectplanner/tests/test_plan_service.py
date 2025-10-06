@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 
 from projectplanner.models import ExportRequest, IngestionRequest, PlanRequest
 from projectplanner.services import ingest, plan
@@ -7,7 +7,7 @@ from projectplanner.services import ingest, plan
 @pytest.mark.asyncio
 async def test_planning_workflow_generates_plan(store):
     ingest_response = await ingest.ingest_document(
-        IngestionRequest(text="Goals: Ship app\nRisks: scope"),
+        IngestionRequest(blueprint="Goals: Ship app\\nRisks: scope"),
         store=store,
     )
     request = PlanRequest(run_id=ingest_response.run_id, style="strict")

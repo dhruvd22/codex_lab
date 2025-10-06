@@ -1,10 +1,10 @@
-﻿[project]
+[project]
 name = "projectplanner"
 version = "0.1.0"
-description = "Document-driven project planner API and agent toolkit"
+description = "Document-driven coding conductor API and agent toolkit"
 readme = "README.md"
 requires-python = ">=3.10"
-authors = [{ name = "Project Planner Team" }]
+authors = [{ name = "The Coding Conductor Team" }]
 dependencies = [
   "fastapi>=0.110.0",
   "uvicorn[standard]>=0.27.0",

@@ -1,4 +1,4 @@
-﻿import Head from "next/head";
+import Head from "next/head";
 import { ChangeEvent, useCallback, useMemo, useState } from "react";
 import {
   AgentReport,
@@ -32,8 +32,6 @@ const streamMessages: Record<string, string> = {
 type StyleOption = "strict" | "creative";
 
 export default function HomePage() {
-  const [textInput, setTextInput] = useState("");
-  const [urlInput, setUrlInput] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [stats, setStats] = useState<DocumentStats | null>(null);
@@ -50,11 +48,12 @@ export default function HomePage() {
     setFile(selected);
   }, []);
 
-  const pickFormatHint = useCallback((): "pdf" | "md" | "docx" | undefined => {
+  const pickFormatHint = useCallback((): "pdf" | "md" | "docx" | "txt" | undefined => {
     if (!file) return undefined;
     if (file.name.endsWith(".pdf")) return "pdf";
     if (file.name.endsWith(".md")) return "md";
     if (file.name.endsWith(".docx")) return "docx";
+    if (file.name.endsWith(".txt")) return "txt";
     return undefined;
   }, [file]);
 
@@ -69,21 +68,18 @@ export default function HomePage() {
     setLoading(true);
     setMessage(null);
     try {
-      const ingestionPayload: Record<string, unknown> = {};
-      if (urlInput) {
-        ingestionPayload.url = urlInput;
+      if (!file) {
+        throw new Error("Upload a blueprint file before ingesting.");
       }
-      if (textInput) {
-        ingestionPayload.text = textInput;
+      const blueprint = await serializeFile();
+      if (!blueprint) {
+        throw new Error("Blueprint file could not be read. Please try again.");
       }
-      if (file) {
-        ingestionPayload.text = await serializeFile();
-        ingestionPayload.format_hint = pickFormatHint();
-      }
-      if (!ingestionPayload.url && !ingestionPayload.text) {
-        throw new Error("Provide text, URL, or upload a file to ingest.");
-      }
-      const response = await ingestDocument(ingestionPayload);
+      const response = await ingestDocument({
+        blueprint,
+        filename: file.name,
+        format_hint: pickFormatHint(),
+      });
       setRunId(response.run_id);
       setStats(response.stats);
       setPlan(null);
@@ -96,7 +92,7 @@ export default function HomePage() {
     } finally {
       setLoading(false);
     }
-  }, [file, loading, pickFormatHint, serializeFile, textInput, urlInput]);
+  }, [file, loading, pickFormatHint, serializeFile]);
   const handlePlan = useCallback(async () => {
     if (!runId) {
       setMessage("Ingest a document before planning.");
@@ -137,7 +133,7 @@ export default function HomePage() {
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
-        link.download = `prompts-${runId}.${format}`;
+        link.download = `coding-conductor-prompts-${runId}.${format}`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -198,36 +194,28 @@ export default function HomePage() {
   return (
     <>
       <Head>
-        <title>Project Planner</title>
+        <title>The Coding Conductor</title>
       </Head>
       <main className="mx-auto max-w-6xl space-y-6 px-4 py-8">
-        <h1 className="text-3xl font-semibold text-white">Project Planner</h1>
+        <h1 className="text-3xl font-semibold text-white">The Coding Conductor</h1>
         <p className="text-slate-400">
-          Upload research, pick a strategy, and generate executable prompts for your AI coding agent.
+          Upload an architecture blueprint, pick a strategy, and generate execution-grade prompts for your autonomous coding agent.
         </p>
         <div className="grid gap-4 sm:grid-cols-2">
-          <textarea
-            value={textInput}
-            onChange={(event) => setTextInput(event.target.value)}
-            placeholder="Paste research or solution doc markdown here..."
-            className="h-48 w-full rounded border border-slate-700 bg-slate-900 p-3 text-sm text-slate-100"
-          />
           <div className="space-y-4 rounded border border-slate-800 bg-slate-900 p-4">
-            <label className="block text-sm font-medium text-slate-200">Or supply a URL</label>
-            <input
-              type="url"
-              value={urlInput}
-              onChange={(event) => setUrlInput(event.target.value)}
-              placeholder="https://example.com/deep-dive.pdf"
-              className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100"
-            />
-            <label className="block text-sm font-medium text-slate-200">Upload document</label>
+            <label className="block text-sm font-medium text-slate-200">Upload blueprint</label>
             <input
               type="file"
               accept=".pdf,.md,.docx,.txt"
               onChange={handleFileChange}
               className="block w-full text-sm text-slate-300"
             />
+            <p className="text-xs text-slate-400">
+              Provide a single document that captures architecture, design decisions, requirements, and constraints for the application.
+            </p>
+            <p className="text-xs text-slate-500">Accepted formats: PDF, Markdown, DOCX, TXT.</p>
+          </div>
+          <div className="space-y-4 rounded border border-slate-800 bg-slate-900 p-4">
             <div className="space-y-2">
               <label className="block text-sm font-medium text-slate-200">Strategy</label>
               <select
@@ -242,10 +230,10 @@ export default function HomePage() {
             <button
               type="button"
               onClick={handleIngest}
-              disabled={loading}
+              disabled={loading || !file}
               className="w-full rounded bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950"
             >
-              {loading ? "Processing..." : "Ingest Document"}
+              {loading ? "Processing..." : "Ingest Blueprint"}
             </button>
             <button
               type="button"

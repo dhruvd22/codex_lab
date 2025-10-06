@@ -17,7 +17,7 @@ async def test_planner_outputs_milestones_and_steps(store):
     """.strip()
 
     ingest_response = await ingest.ingest_document(
-        IngestionRequest(text=sample_doc),
+        IngestionRequest(blueprint=sample_doc),
         store=store,
     )
 

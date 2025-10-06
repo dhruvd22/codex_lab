@@ -1,33 +1,41 @@
-"""Core Pydantic models for the project planner module."""
+"""Core Pydantic models for the coding conductor module."""
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, HttpUrl, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 class IngestionRequest(BaseModel):
-    """Request payload for ingesting a source document."""
+    """Request payload for ingesting an application blueprint."""
 
-    url: Optional[HttpUrl] = Field(None, description="Remote document to fetch and ingest.")
-    text: Optional[str] = Field(
-        None, min_length=1, description="Raw text content supplied by the caller."
+    blueprint: str = Field(
+        ...,
+        min_length=1,
+        validation_alias=AliasChoices("blueprint", "text"),
+        description=(
+            "Base64-encoded blueprint file contents or inline architecture text prepared for synthesis."
+        ),
     )
-    file_id: Optional[str] = Field(
+    filename: Optional[str] = Field(
         None,
-        description="Identifier for a previously uploaded file stored by the UI layer.",
+        description="Original filename supplied by the caller for traceability in logs.",
     )
-    format_hint: Optional[Literal["pdf", "md", "docx"]] = Field(
-        None, description="Helps the ingestion pipeline pick the proper parser."
+    format_hint: Optional[Literal["pdf", "md", "docx", "txt"]] = Field(
+        None,
+        description="Helps the ingestion pipeline pick the proper parser when the content type is ambiguous.",
     )
+
+    model_config = ConfigDict(populate_by_name=True)
 
     @model_validator(mode="after")
-    def ensure_payload_present(cls, values: "IngestionRequest") -> "IngestionRequest":
-        """Require at least one source of content to be provided."""
+    def ensure_blueprint_present(cls, values: "IngestionRequest") -> "IngestionRequest":
+        """Ensure a blueprint payload is always provided."""
 
-        if not (values.url or values.text or values.file_id):
-            raise ValueError("Provide one of url, text, or file_id for ingestion.")
+        blueprint = (values.blueprint or "").strip()
+        if not blueprint:
+            raise ValueError("Blueprint content must be provided for ingestion.")
         return values
 
 
@@ -72,7 +80,7 @@ class MilestoneObjective(BaseModel):
     dependencies: List[str] = Field(default_factory=list, description="Milestone ids that must precede this milestone.")
 
 class PromptPlan(BaseModel):
-    """High-level plan extracted from the research document."""
+    """High-level application strategy extracted from the submitted blueprint."""
 
     context: str = Field(..., description="Concise domain context for the project.")
     goals: List[str] = Field(..., description="Primary objectives the build must satisfy.")
@@ -83,7 +91,7 @@ class PromptPlan(BaseModel):
 
 
 class PromptStep(BaseModel):
-    """Executable build prompt for an AI coding agent."""
+    """Execution-ready instructions empowering an autonomous AI to design and deliver a robust application."""
 
     id: str = Field(..., pattern=r"^[a-z0-9\-]+$", description="Stable identifier for the step.")
     title: str

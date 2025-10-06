@@ -180,7 +180,7 @@ export function LoggingPanel(): JSX.Element {
         end: window.end,
       });
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const parts = ["projectplanner", "logs", source];
+      const parts = ["codingconductor", "logs", source];
       if (effectiveLevel) {
         parts.push(effectiveLevel.toLowerCase());
       }

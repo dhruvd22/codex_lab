@@ -130,7 +130,7 @@ export function PromptLogPanel(): JSX.Element {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `projectplanner-prompt-audit-${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`;
+      anchor.download = `codingconductor-prompt-audit-${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();

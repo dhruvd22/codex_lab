@@ -1,4 +1,4 @@
-﻿"""Persistence layer for the project planner module."""
+﻿"""Persistence layer for the coding conductor module."""
 from __future__ import annotations
 
 import json
@@ -121,7 +121,7 @@ class ProjectPlannerStore:
             data_dir = Path(__file__).resolve().parent / "../data"
             data_dir = data_dir.resolve()
             data_dir.mkdir(parents=True, exist_ok=True)
-            database_url = f"sqlite:///{data_dir / 'projectplanner.db'}"
+            database_url = f"sqlite:///{data_dir / 'codingconductor.db'}"
         engine = create_engine(database_url, future=True, echo=False)
         return cls(engine)
 
@@ -132,7 +132,7 @@ class ProjectPlannerStore:
         except Exception:  # pragma: no cover - defensive
             safe_url = str(self.engine.url)
         LOGGER.debug(
-            "Ensured project planner schema on %s",
+            "Ensured coding conductor schema on %s",
             safe_url,
             extra={"event": "store.schema.ensure"},
         )

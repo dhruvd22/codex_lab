@@ -1,4 +1,4 @@
-"""Shared logging utilities for project planner and future modules."""
+"""Shared logging utilities for coding conductor and future modules."""
 from __future__ import annotations
 
 import inspect
@@ -15,6 +15,21 @@ from types import FrameType
 from typing import Any, Deque, Dict, Mapping, MutableMapping, Optional, Sequence, Union
 
 JSONValue = Union[str, int, float, bool, None, list["JSONValue"], Dict[str, "JSONValue"]]
+
+BRAND_ENV_PREFIX = "CODING_CONDUCTOR"
+LEGACY_ENV_PREFIX = "PROJECTPLANNER"
+
+
+def _get_env(suffix: str, default: Optional[str] = None) -> Optional[str]:
+    """Fetch a configuration value with support for legacy environment prefixes."""
+
+    primary = os.getenv(f"{BRAND_ENV_PREFIX}_{suffix}")
+    if primary is not None:
+        return primary
+    legacy = os.getenv(f"{LEGACY_ENV_PREFIX}_{suffix}")
+    if legacy is not None:
+        return legacy
+    return default
 
 def _resolve_capacity(value: Optional[str]) -> Optional[int]:
     """Translate configuration input into an optional log buffer capacity."""
@@ -36,17 +51,17 @@ def _resolve_capacity(value: Optional[str]) -> Optional[int]:
     return max(256, parsed)
 
 
-_DEFAULT_CAPACITY = _resolve_capacity(os.getenv("PROJECTPLANNER_LOG_CAPACITY"))
+_DEFAULT_CAPACITY = _resolve_capacity(_get_env("LOG_CAPACITY"))
 
 try:
-    _PROMPT_PREVIEW_LIMIT = int(os.getenv("PROJECTPLANNER_LOG_PROMPT_PREVIEW", "600"))
+    _PROMPT_PREVIEW_LIMIT = int(_get_env("LOG_PROMPT_PREVIEW", "600"))
     _PROMPT_PREVIEW_LIMIT = max(120, min(_PROMPT_PREVIEW_LIMIT, 4000))
 except (TypeError, ValueError):
     _PROMPT_PREVIEW_LIMIT = 600
 
 
 
-_PROMPT_LOG_ENV = os.getenv('PROJECTPLANNER_PROMPT_LOG')
+_PROMPT_LOG_ENV = _get_env('PROMPT_LOG')
 if _PROMPT_LOG_ENV and _PROMPT_LOG_ENV.strip():
     _PROMPT_LOG_PATH = Path(_PROMPT_LOG_ENV).expanduser()
 else:
@@ -67,7 +82,7 @@ def _append_prompt_audit(entry: Mapping[str, Any]) -> None:
                 handle.write(line)
                 handle.write('\n')
     except Exception:
-        logging.getLogger('projectplanner.prompt_audit').exception(
+        logging.getLogger('codingconductor.prompt_audit').exception(
             'Failed to write prompt audit entry.',
             extra={'event': 'prompt.audit.write_failed'},
         )
@@ -334,8 +349,8 @@ _LOG_MANAGER = LogManager()
 
 def ensure_configured() -> None:
     if not _LOG_MANAGER.configured:
-        default_level = os.getenv("PROJECTPLANNER_LOG_LEVEL") or os.getenv("APP_LOG_LEVEL")
-        default_logger = os.getenv("PROJECTPLANNER_LOGGER_NAME") or None
+        default_level = _get_env("LOG_LEVEL") or os.getenv("APP_LOG_LEVEL")
+        default_logger = _get_env("LOGGER_NAME") or None
         _LOG_MANAGER.configure(logger_name=default_logger, level=default_level)
 
 
@@ -357,13 +372,13 @@ def get_logger(name: str) -> logging.Logger:
 _FUNCTION_CALL_TRACE_ENABLED = False
 _FUNCTION_CALL_TRACE_LOCK = RLock()
 _FUNCTION_CALL_TRACE_PREVIOUS: dict[str, object] = {"sys": None, "threading": None}
-_FUNCTION_CALL_TRACE_LOGGER_NAME = "projectplanner.trace"
+_FUNCTION_CALL_TRACE_LOGGER_NAME = "codingconductor.trace"
 _CALL_TRACE_THREAD_STATE = threading.local()
 
 
 def _normalize_prefixes(prefixes: Optional[Sequence[str]]) -> tuple[str, ...]:
     if not prefixes:
-        return ("projectplanner", "app")
+        return ("codingconductor", "app")
     cleaned: list[str] = []
     seen: set[str] = set()
     for prefix in prefixes:
@@ -375,7 +390,7 @@ def _normalize_prefixes(prefixes: Optional[Sequence[str]]) -> tuple[str, ...]:
         cleaned.append(value)
         seen.add(value)
     if not cleaned:
-        return ("projectplanner", "app")
+        return ("codingconductor", "app")
     return tuple(cleaned)
 
 
@@ -523,7 +538,7 @@ def is_function_call_logging_enabled() -> bool:
 
 
 def _should_enable_call_logging() -> bool:
-    flag = os.getenv('PROJECTPLANNER_TRACE_CALLS')
+    flag = _get_env('TRACE_CALLS')
     if flag is None:
         return True
     return flag.strip().lower() not in {'0', 'false', 'no', 'off'}

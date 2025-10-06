@@ -1,4 +1,4 @@
-"""API router exposing project planner endpoints."""
+"""API router exposing The Coding Conductor endpoints."""
 from __future__ import annotations
 
 import json
@@ -55,17 +55,16 @@ def _format_sse(event_type: str, payload: dict) -> str:
 
 @router.post("/ingest", response_model=IngestionResponse)
 async def ingest_endpoint(payload: IngestionRequest, request: Request) -> IngestionResponse:
-    """Ingest a document and return run metadata."""
+    """Ingest a blueprint document and return run metadata."""
 
     LOGGER.info(
         "Ingest request received",
         extra={
             "event": "api.ingest.start",
             "payload": {
-                "has_text": bool(payload.text),
-                "has_url": bool(payload.url),
-                "has_file": bool(payload.file_id),
-                "text_chars": len(payload.text or "") if payload.text else 0,
+                "filename": payload.filename,
+                "encoded": payload.blueprint.startswith("base64:"),
+                "format_hint": payload.format_hint,
             },
         },
     )
@@ -241,7 +240,7 @@ async def export_logs(
         end=end_dt,
     )
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    filename = f"projectplanner-logs-{normalized_type}-{timestamp}.jsonl"
+    filename = f"codingconductor-logs-{normalized_type}-{timestamp}.jsonl"
 
     def iterator() -> Iterator[str]:
         for record in logs:
@@ -269,7 +268,7 @@ async def download_prompt_audit() -> StreamingResponse:
                 yield chunk
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    filename = f"projectplanner-prompts-{timestamp}.jsonl"
+    filename = f"codingconductor-prompts-{timestamp}.jsonl"
     headers = {"Content-Disposition": f"attachment; filename={filename}"}
     LOGGER.info(
         "Prompt audit log download prepared",
@@ -348,7 +347,7 @@ async def export_observability(
     )
     payload = snapshot.model_dump_json(indent=2)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    filename = f"projectplanner-observability-{timestamp}.json"
+    filename = f"codingconductor-observability-{timestamp}.json"
     headers = {"Content-Disposition": f"attachment; filename={filename}"}
     return StreamingResponse(iter([payload.encode("utf-8")]), media_type="application/json", headers=headers)
 

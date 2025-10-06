@@ -11,7 +11,7 @@ export function AppLayout({ children }: { children: ReactNode }): JSX.Element {
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-3">
-          <span className="text-lg font-semibold text-slate-100">Project Planner</span>
+          <span className="text-lg font-semibold text-slate-100">The Coding Conductor</span>
           <nav className="flex gap-2 text-sm" role="tablist">
             <button
               type="button"

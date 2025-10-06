@@ -1,8 +1,7 @@
 export type IngestionRequest = {
-  url?: string;
-  text?: string;
-  file_id?: string;
-  format_hint?: "pdf" | "md" | "docx";
+  blueprint: string;
+  filename?: string;
+  format_hint?: "pdf" | "md" | "docx" | "txt";
 };
 
 export type DocumentStats = {
@@ -190,7 +189,7 @@ async function http<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export async function ingestDocument(payload: IngestionRequest): Promise<IngestionResponse> {
-  return http<IngestionResponse>("/api/projectplanner/ingest", {
+  return http<IngestionResponse>("/api/codingconductor/ingest", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -200,7 +199,7 @@ export async function generatePlan(
   payload: PlanRequest,
   onEvent?: PlanEventHandler,
 ): Promise<PlanResponse> {
-  const response = await fetch(resolveApiUrl("/api/projectplanner/plan"), {
+  const response = await fetch(resolveApiUrl("/api/codingconductor/plan"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -296,11 +295,11 @@ function parseServerSentEvent(payload: string): { eventType: string; data: unkno
 }
 
 export async function getSteps(runId: string): Promise<StepsResponse> {
-  return http<StepsResponse>(`/api/projectplanner/steps/${runId}`);
+  return http<StepsResponse>(`/api/codingconductor/steps/${runId}`);
 }
 
 export async function exportPrompts(payload: ExportRequest): Promise<Blob> {
-  const response = await fetch(resolveApiUrl("/api/projectplanner/export"), {
+  const response = await fetch(resolveApiUrl("/api/codingconductor/export"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -313,7 +312,7 @@ export async function exportPrompts(payload: ExportRequest): Promise<Blob> {
 }
 
 export async function updateSteps(runId: string, steps: PromptStep[]): Promise<StepsResponse> {
-  return http<StepsResponse>(`/api/projectplanner/steps/${runId}`, {
+  return http<StepsResponse>(`/api/codingconductor/steps/${runId}`, {
     method: "PUT",
     body: JSON.stringify({ steps }),
   });
@@ -348,7 +347,7 @@ export async function fetchLogs(params: {
   const logType = params.type ?? "runtime";
   search.set("type", logType);
   const query = search.toString();
-  return http<LogsResponse>(`/api/projectplanner/logs${query ? `?${query}` : ""}`);
+  return http<LogsResponse>(`/api/codingconductor/logs${query ? `?${query}` : ""}`);
 }
 
 export async function fetchObservabilitySnapshot(
@@ -368,7 +367,7 @@ export async function fetchObservabilitySnapshot(
     search.set("end", params.end);
   }
   const query = search.toString();
-  return http<ObservabilitySnapshot>(`/api/projectplanner/observability${query ? `?${query}` : ""}`);
+  return http<ObservabilitySnapshot>(`/api/codingconductor/observability${query ? `?${query}` : ""}`);
 }
 
 export async function downloadLogs(params: {
@@ -391,7 +390,7 @@ export async function downloadLogs(params: {
     search.set("end", params.end);
   }
   const query = search.toString();
-  const response = await fetch(resolveApiUrl(`/api/projectplanner/logs/export${query ? `?${query}` : ""}`));
+  const response = await fetch(resolveApiUrl(`/api/codingconductor/logs/export${query ? `?${query}` : ""}`));
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `Failed to export logs (status ${response.status})`);
@@ -400,7 +399,7 @@ export async function downloadLogs(params: {
 }
 
 export async function downloadPromptAudit(): Promise<Blob> {
-  const response = await fetch(resolveApiUrl("/api/projectplanner/prompts/download"));
+  const response = await fetch(resolveApiUrl("/api/codingconductor/prompts/download"));
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `Failed to download prompt audit (status ${response.status})`);
@@ -426,7 +425,7 @@ export async function downloadObservabilitySnapshot(
   }
   const query = search.toString();
   const response = await fetch(
-    resolveApiUrl(`/api/projectplanner/observability/export${query ? `?${query}` : ""}`),
+    resolveApiUrl(`/api/codingconductor/observability/export${query ? `?${query}` : ""}`),
   );
   if (!response.ok) {
     const detail = await response.text();

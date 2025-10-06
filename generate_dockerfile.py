@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the multi-stage Dockerfile for the Project Planner service."""
+"""Generate the multi-stage Dockerfile for The Coding Conductor service."""
 
 from pathlib import Path
 from textwrap import dedent

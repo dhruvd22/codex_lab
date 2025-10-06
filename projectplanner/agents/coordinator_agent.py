@@ -14,7 +14,7 @@ from projectplanner.agents._openai_helpers import (
     extract_message_content,
 )
 from projectplanner.models import MilestoneObjective
-from projectplanner.config import MAX_COMPLETION_TOKENS
+from projectplanner.config import MAX_COMPLETION_TOKENS, get_setting
 
 try:  # pragma: no cover - optional dependency guard
     from openai import OpenAI
@@ -23,7 +23,7 @@ except Exception:  # pragma: no cover
 
 LOGGER = get_logger(__name__)
 
-DEFAULT_COORDINATOR_MODEL = os.getenv("PROJECTPLANNER_COORDINATOR_MODEL", "gpt-5")
+DEFAULT_COORDINATOR_MODEL = get_setting("COORDINATOR_MODEL", "gpt-5")
 MAX_CONTEXT_CHARS = 150_000
 
 def _resolve_coordinator_completion_token_attempts() -> tuple[int, ...]:
@@ -34,9 +34,9 @@ COORDINATOR_COMPLETION_TOKEN_ATTEMPTS = _resolve_coordinator_completion_token_at
 
 
 COORDINATOR_SYSTEM_PROMPT = (
-    "You are Agent 0, the lead project coordinator for an AI execution graph. "
-    "Review solution and design documents to extract a concise set of actionable milestone titles that downstream AI builders can execute. "
-    "Each milestone must describe concrete outcomes, surface required deliverables, and sequence work so the requested application can be delivered end-to-end. "
+    "You are Agent 0, the lead conductor orchestrating an autonomous build program. "
+    "Study the supplied architecture and requirements blueprint to produce a concise set of actionable milestones that downstream AI builders can execute. "
+    "Each milestone must emphasize resilient system design, surface required deliverables, and order the work so the application can be delivered end-to-end without human intervention. "
     "Respond strictly with JSON that matches the schema: {\"milestones\": [{\"id\": \"m01\", \"title\": \"...\", \"objective\": \"...\", \"success_criteria\": [\"...\"], \"dependencies\": []}]}. "
     "Use lowercase identifiers that satisfy ^[a-z0-9-]+$ and do not add commentary. "
     "Return between four and seven milestones that unlock the desired solution."
@@ -48,7 +48,7 @@ class CoordinatorAgent:
     """Synthesizes milestone objectives by delegating to GPT-5 when available."""
 
     def __init__(self) -> None:
-        self._model = os.getenv("PROJECTPLANNER_COORDINATOR_MODEL", DEFAULT_COORDINATOR_MODEL)
+        self._model = get_setting("COORDINATOR_MODEL") or DEFAULT_COORDINATOR_MODEL
         self._client = None
         api_key = os.getenv("OPENAI_API_KEY")
         if api_key and OpenAI is not None:

@@ -1,4 +1,4 @@
-"""Observability snapshot utilities for the project planner workflow."""
+"""Observability snapshot utilities for the coding conductor workflow."""
 from __future__ import annotations
 
 import math

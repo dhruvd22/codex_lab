@@ -233,7 +233,7 @@ export function ObservabilityDashboard(): JSX.Element {
         end: window.end,
       });
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const filename = `projectplanner-observability-${timestamp}.json`;
+      const filename = `codingconductor-observability-${timestamp}.json`;
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;

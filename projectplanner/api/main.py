@@ -1,4 +1,4 @@
-﻿"""FastAPI application factory for the project planner module."""
+﻿"""FastAPI application factory for the coding conductor module."""
 from __future__ import annotations
 
 import os
@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from projectplanner.api.routers import prompts
+from projectplanner.config import get_setting
 from projectplanner.logging_utils import configure_logging, get_logger
 from projectplanner.services.store import ProjectPlannerStore
 
@@ -26,8 +27,8 @@ RATE_LIMIT_WINDOW_SECONDS = 60
 
 
 configure_logging(
-    logger_name=os.getenv("PROJECTPLANNER_LOGGER_NAME") or None,
-    level=os.getenv("PROJECTPLANNER_LOG_LEVEL"),
+    logger_name=get_setting("LOGGER_NAME") or None,
+    level=get_setting("LOG_LEVEL") or os.getenv("APP_LOG_LEVEL"),
 )
 LOGGER = get_logger(__name__)
 
@@ -94,10 +95,10 @@ def create_app() -> FastAPI:
     """Instantiate and configure the FastAPI application."""
 
     LOGGER.info(
-        "Creating Project Planner FastAPI application.",
+        "Creating The Coding Conductor FastAPI application.",
         extra={"event": "api.bootstrap"},
     )
-    app = FastAPI(title="Project Planner API", version="0.1.0")
+    app = FastAPI(title="The Coding Conductor API", version="0.1.0")
 
     # Basic CORS defaults suitable for local development and preview deployments.
     app.add_middleware(
@@ -118,7 +119,7 @@ def create_app() -> FastAPI:
     )
     app.state.store = store
 
-    app.include_router(prompts.router, prefix="/api/projectplanner", tags=["projectplanner"])
+    app.include_router(prompts.router, prefix="/api/codingconductor", tags=["codingconductor"])
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz() -> JSONResponse:
@@ -171,7 +172,7 @@ def _discover_frontend_modules() -> list[FrontendModule]:
     if override_path:
         dist = Path(override_path).expanduser().resolve()
         if (dist / "index.html").is_file():
-            return [FrontendModule(slug="projectplanner", title="Project Planner", dist_path=dist)]
+            return [FrontendModule(slug="codingconductor", title="The Coding Conductor", dist_path=dist)]
         return []
 
     modules: list[FrontendModule] = []
@@ -230,7 +231,7 @@ def _render_landing_page(modules: Sequence[FrontendModule]) -> str:
         <html lang="en">
           <head>
             <meta charset="utf-8" />
-            <title>Project Planner Services</title>
+            <title>The Coding Conductor Services</title>
             <meta name="viewport" content="width=device-width, initial-scale=1" />
             <style>
               :root {{
@@ -321,14 +322,14 @@ def _render_landing_page(modules: Sequence[FrontendModule]) -> str:
           </head>
           <body>
             <main>
-              <h1>Project Planner Services</h1>
+              <h1>The Coding Conductor Services</h1>
               <p class="lead">Launch an available UI module or explore the API via <a href="/docs">Swagger</a>.</p>
               <div class="modules">
                 {modules_markup}
               </div>
               <footer>
                 <span>Status: {status_text}</span>
-                <span>API root: <code>/api/projectplanner</code></span>
+                <span>API root: <code>/api/codingconductor</code></span>
               </footer>
             </main>
           </body>

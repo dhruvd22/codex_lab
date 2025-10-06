@@ -36,15 +36,15 @@ def test_api_plan_flow(tmp_path):
     client = _make_client(tmp_path)
 
     ingest_response = client.post(
-        "/api/projectplanner/ingest",
-        json={"text": "Goals: improve ux\nRisks: timeline"},
+        "/api/codingconductor/ingest",
+        json={"blueprint": "Goals: improve ux\nRisks: timeline"},
     )
     assert ingest_response.status_code == 200
     run_id = ingest_response.json()["run_id"]
 
     with client.stream(
         "POST",
-        "/api/projectplanner/plan",
+        "/api/codingconductor/plan",
         json={"run_id": run_id, "style": "strict"},
     ) as stream:
         assert stream.status_code == 200
@@ -56,14 +56,14 @@ def test_api_plan_flow(tmp_path):
 
     steps[0]["title"] = "Updated Title"
     update_response = client.put(
-        f"/api/projectplanner/steps/{run_id}",
+        f"/api/codingconductor/steps/{run_id}",
         json={"steps": steps},
     )
     assert update_response.status_code == 200
     assert update_response.json()["steps"][0]["title"] == "Updated Title"
 
     export_response = client.post(
-        "/api/projectplanner/export",
+        "/api/codingconductor/export",
         json={"run_id": run_id, "format": "yaml"},
     )
     assert export_response.status_code == 200

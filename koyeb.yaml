@@ -1,6 +1,6 @@
-name: projectplanner
+name: coding-conductor
 services:
-  - name: planner
+  - name: conductor
     type: web
     source:
       type: docker

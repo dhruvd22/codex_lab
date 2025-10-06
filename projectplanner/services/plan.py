@@ -297,9 +297,9 @@ async def export_prompts(payload: ExportRequest, *, store: ProjectPlannerStore) 
     content = formatter(plan, steps, report)
     timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     filename, content_type = {
-        "yaml": (f"prompts-{payload.run_id}-{timestamp}.yaml", "application/yaml"),
-        "jsonl": (f"prompts-{payload.run_id}-{timestamp}.jsonl", "application/json"),
-        "md": (f"prompts-{payload.run_id}-{timestamp}.md", "text/markdown"),
+        "yaml": (f"coding-conductor-prompts-{payload.run_id}-{timestamp}.yaml", "application/yaml"),
+        "jsonl": (f"coding-conductor-prompts-{payload.run_id}-{timestamp}.jsonl", "application/json"),
+        "md": (f"coding-conductor-prompts-{payload.run_id}-{timestamp}.md", "text/markdown"),
     }[payload.format]
 
     metadata = ExportMetadata(
@@ -372,7 +372,7 @@ def _to_jsonl(plan: PromptPlan, steps: List[PromptStep], report: AgentReport | N
 
 
 def _to_markdown(plan: PromptPlan, steps: List[PromptStep], report: AgentReport | None) -> str:
-    lines = ["# Project Plan", "", f"**Context**: {plan.context}"]
+    lines = ["# Prompt Blueprint", "", f"**Context**: {plan.context}"]
     for heading in ("goals", "assumptions", "non_goals", "risks", "milestones"):
         section = getattr(plan, heading)
         if section:
