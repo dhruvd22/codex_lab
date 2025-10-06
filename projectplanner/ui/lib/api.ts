@@ -399,6 +399,15 @@ export async function downloadLogs(params: {
   return await response.blob();
 }
 
+export async function downloadPromptAudit(): Promise<Blob> {
+  const response = await fetch(resolveApiUrl("/api/projectplanner/prompts/download"));
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Failed to download prompt audit (status ${response.status})`);
+  }
+  return await response.blob();
+}
+
 export async function downloadObservabilitySnapshot(
   params: { limit?: number; calls?: number; start?: string; end?: string } = {},
 ): Promise<Blob> {

@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 import os
 import sys
 import threading
 from collections import deque
 from datetime import datetime, timezone
+from pathlib import Path
 from threading import RLock
 from types import FrameType
 from typing import Any, Deque, Dict, Mapping, MutableMapping, Optional, Sequence, Union
@@ -41,6 +43,35 @@ try:
     _PROMPT_PREVIEW_LIMIT = max(120, min(_PROMPT_PREVIEW_LIMIT, 4000))
 except (TypeError, ValueError):
     _PROMPT_PREVIEW_LIMIT = 600
+
+
+
+_PROMPT_LOG_ENV = os.getenv('PROJECTPLANNER_PROMPT_LOG')
+if _PROMPT_LOG_ENV and _PROMPT_LOG_ENV.strip():
+    _PROMPT_LOG_PATH = Path(_PROMPT_LOG_ENV).expanduser()
+else:
+    _PROMPT_LOG_PATH = Path(__file__).resolve().parent / 'data' / 'prompt_audit.jsonl'
+_PROMPT_LOG_PATH = _PROMPT_LOG_PATH.resolve()
+_PROMPT_LOG_LOCK = RLock()
+
+def get_prompt_audit_path() -> Path:
+    return _PROMPT_LOG_PATH
+
+
+def _append_prompt_audit(entry: Mapping[str, Any]) -> None:
+    try:
+        _PROMPT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(entry, ensure_ascii=False)
+        with _PROMPT_LOG_LOCK:
+            with _PROMPT_LOG_PATH.open('a', encoding='utf-8') as handle:
+                handle.write(line)
+                handle.write('
+')
+    except Exception:
+        logging.getLogger('projectplanner.prompt_audit').exception(
+            'Failed to write prompt audit entry.',
+            extra={'event': 'prompt.audit.write_failed'},
+        )
 
 
 def _coerce_level(level: str | int | None) -> Optional[int]:
@@ -514,18 +545,37 @@ def log_prompt(
     target = logger or logging.getLogger(f"{agent}.prompt")
     normalized_stage = stage or "request"
     preview = _preview_text(prompt, _PROMPT_PREVIEW_LIMIT)
+    truncated = len(prompt) > _PROMPT_PREVIEW_LIMIT
     payload: MutableMapping[str, Any] = {
         "agent": agent,
         "role": role,
         "stage": normalized_stage,
         "chars": len(prompt),
         "preview": preview,
-        "content": prompt,
+        "truncated": truncated,
     }
+    metadata_payload = _sanitize(metadata) if metadata else None
     if model:
         payload["model"] = model
-    if metadata:
-        payload["metadata"] = _sanitize(metadata)
+    if metadata_payload:
+        payload["metadata"] = metadata_payload
+    audit_entry: dict[str, Any] = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "agent": agent,
+        "role": role,
+        "stage": normalized_stage,
+        "chars": len(prompt),
+        "preview": preview,
+        "truncated": truncated,
+        "prompt": prompt,
+    }
+    if run_id:
+        audit_entry["run_id"] = run_id
+    if model:
+        audit_entry["model"] = model
+    if metadata_payload:
+        audit_entry["metadata"] = metadata_payload
+    _append_prompt_audit(audit_entry)
     target.info(
         "%s prompt for %s (%d chars)",
         normalized_stage.capitalize(),
@@ -555,6 +605,7 @@ __all__ = [
     "enable_function_call_logging",
     "get_log_manager",
     "get_logger",
+    "get_prompt_audit_path",
     "is_function_call_logging_enabled",
     "log_prompt",
 ]

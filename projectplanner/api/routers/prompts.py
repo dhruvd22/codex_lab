@@ -9,7 +9,7 @@ from typing import Iterator, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
-from projectplanner.logging_utils import get_log_manager, get_logger
+from projectplanner.logging_utils import get_log_manager, get_logger, get_prompt_audit_path
 from projectplanner.models import (
     ExportRequest,
     IngestionRequest,
@@ -248,6 +248,33 @@ async def export_logs(
             yield json.dumps(record, ensure_ascii=False) + "\n"
 
     headers = {"Content-Disposition": f"attachment; filename={filename}"}
+    return StreamingResponse(iterator(), media_type="application/x-ndjson", headers=headers)
+
+
+
+@router.get("/prompts/download")
+async def download_prompt_audit() -> StreamingResponse:
+    """Download the full prompt audit log with untruncated content."""
+
+    path = get_prompt_audit_path()
+    if not path.exists() or path.stat().st_size == 0:
+        raise HTTPException(status_code=404, detail="Prompt audit log is not available.")
+
+    def iterator() -> Iterator[bytes]:
+        with path.open("rb") as handle:
+            while True:
+                chunk = handle.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    filename = f"projectplanner-prompts-{timestamp}.jsonl"
+    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+    LOGGER.info(
+        "Prompt audit log download prepared",
+        extra={"event": "api.prompts.audit_download", "payload": {"filename": filename}},
+    )
     return StreamingResponse(iterator(), media_type="application/x-ndjson", headers=headers)
 
 
