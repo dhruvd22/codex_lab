@@ -65,8 +65,7 @@ def _append_prompt_audit(entry: Mapping[str, Any]) -> None:
         with _PROMPT_LOG_LOCK:
             with _PROMPT_LOG_PATH.open('a', encoding='utf-8') as handle:
                 handle.write(line)
-                handle.write('
-')
+                handle.write('\n')
     except Exception:
         logging.getLogger('projectplanner.prompt_audit').exception(
             'Failed to write prompt audit entry.',
