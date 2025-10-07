@@ -1,4 +1,4 @@
-"""Pydantic models for The Coding Orchestrator workflow."""
+﻿"""Pydantic models for The Coding Orchestrator workflow."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -149,4 +149,5 @@ __all__ = [
     "OrchestratorApprovalResponse",
     "OrchestratorSessionStatus",
 ]
+
 

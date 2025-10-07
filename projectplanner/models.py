@@ -1,4 +1,4 @@
-"""Core Pydantic models for the coding conductor module."""
+﻿"""Core Pydantic models for the coding conductor module."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -244,6 +244,7 @@ class StepUpdateRequest(BaseModel):
     """Request payload for updating stored steps."""
 
     steps: List[PromptStep]
+
 
 
 

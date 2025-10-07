@@ -1,4 +1,4 @@
-export type IngestionRequest = {
+﻿export type IngestionRequest = {
   blueprint: string;
   filename?: string;
   format_hint?: "pdf" | "md" | "docx" | "txt";
@@ -624,3 +624,4 @@ export async function finalizeOrchestratorRun(runId: string): Promise<Orchestrat
 export async function getOrchestratorResult(runId: string): Promise<OrchestratorResult> {
   return http<OrchestratorResult>(`${ORCHESTRATOR_BASE}/runs/${runId}/result`);
 }
+

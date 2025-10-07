@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   downloadObservabilitySnapshot,
@@ -339,7 +339,7 @@ export function ObservabilityDashboard(): JSX.Element {
             disabled={isDownloading}
             className="rounded border border-slate-700 bg-slate-900 px-3 py-1 text-xs font-medium text-slate-200 transition hover:border-emerald-500 hover:text-emerald-300 disabled:opacity-60 disabled:hover:border-slate-700"
           >
-            {isDownloading ? "Preparing…" : "Download"}
+            {isDownloading ? "Preparingâ€¦" : "Download"}
           </button>
           <button
             type="button"
@@ -814,4 +814,5 @@ function formatPayload(payload: Record<string, unknown> | null | undefined): str
     return `Unable to format payload: ${(error as Error).message}`;
   }
 }
+
 

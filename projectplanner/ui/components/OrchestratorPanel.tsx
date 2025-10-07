@@ -1,4 +1,4 @@
-import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
+ï»¿import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   createOrchestratorRun,
@@ -383,7 +383,7 @@ export function OrchestratorPanel(): JSX.Element {
           className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200"
           disabled={isBusy || orderedRuns.length === 0}
         >
-          <option value="">Select a run…</option>
+          <option value="">Select a runâ€¦</option>
           {orderedRuns.map((run) => (
             <option key={run.run_id} value={run.run_id}>
               {formatRunLabel(run)}
@@ -414,7 +414,7 @@ export function OrchestratorPanel(): JSX.Element {
             {banner.message}
           </div>
         )}
-        {busyAction && <p className="text-xs text-slate-500">Working on: {busyAction}…</p>}
+        {busyAction && <p className="text-xs text-slate-500">Working on: {busyAction}â€¦</p>}
       </div>
 
       <div className="space-y-6">
@@ -703,7 +703,7 @@ function formatRunLabel(run: OrchestratorSessionStatus): string {
       : "milestones ready"
     : "milestones pending";
   const promptState = run.prompts_ready ? "prompts ready" : "prompts pending";
-  return `${run.run_id} — ${summaryState}, ${milestoneState}, ${promptState}`;
+  return `${run.run_id} â€” ${summaryState}, ${milestoneState}, ${promptState}`;
 }
 
 async function fileToBlueprint(file: File): Promise<string> {
@@ -725,3 +725,4 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   }
   return btoa(binary);
 }
+

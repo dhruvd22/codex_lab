@@ -1,4 +1,4 @@
-import { ReactNode, useState } from "react";
+﻿import { ReactNode, useState } from "react";
 
 import { LoggingPanel } from "@/components/LoggingPanel";
 import { ObservabilityDashboard } from "@/components/ObservabilityDashboard";
@@ -125,6 +125,7 @@ export function AppLayout({ children }: { children: ReactNode }): JSX.Element {
     </div>
   );
 }
+
 
 
 
