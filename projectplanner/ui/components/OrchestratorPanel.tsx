@@ -20,6 +20,7 @@ import {
   regenerateOrchestratorSummary,
   submitOrchestratorMilestonesDecision,
   submitOrchestratorSummaryDecision,
+  HttpError,
 } from "@/lib/api";
 
 type Banner = { type: "info" | "error"; message: string } | null;
@@ -964,6 +965,23 @@ function buildErrorMessage(context: string, error: unknown): string {
 }
 
 function extractErrorDetail(error: unknown): string {
+  if (error instanceof HttpError) {
+    const statusLabel = formatHttpStatus(error);
+    const htmlLike = isHtmlErrorDetail(error);
+    if (!htmlLike && error.detail) {
+      const cleanedDetail = sanitizeErrorText(error.detail);
+      if (cleanedDetail) {
+        return cleanedDetail;
+      }
+    }
+    if (!htmlLike) {
+      const cleanedMessage = sanitizeErrorText(error.message);
+      if (cleanedMessage && cleanedMessage !== statusLabel) {
+        return cleanedMessage;
+      }
+    }
+    return statusLabel || sanitizeErrorText(error.message);
+  }
   if (error instanceof Error && typeof error.message === "string") {
     return sanitizeErrorText(error.message);
   }
@@ -971,6 +989,22 @@ function extractErrorDetail(error: unknown): string {
     return sanitizeErrorText(error);
   }
   return "";
+}
+
+function isHtmlErrorDetail(error: HttpError): boolean {
+  if (error.contentType && error.contentType.includes("text/html")) {
+    return true;
+  }
+  const candidate = error.detail ?? error.body ?? "";
+  return /<[^>]+>/.test(candidate);
+}
+
+function formatHttpStatus(error: HttpError): string {
+  if (!error.status) {
+    return "";
+  }
+  const statusText = error.statusText.trim();
+  return statusText ? `HTTP ${error.status} ${statusText}` : `HTTP ${error.status}`;
 }
 
 function sanitizeErrorText(input: string): string {

@@ -158,6 +158,36 @@ export type PlanEventHandler = (event: string, data: unknown) => void;
 
 const envApiBase = ((globalThis as any)?.process?.env?.NEXT_PUBLIC_API_URL ?? "").replace(/\/$/, "");
 
+type HttpErrorInit = {
+  status: number;
+  statusText: string;
+  detail?: string;
+  body?: string;
+  contentType?: string | null;
+};
+
+export class HttpError extends Error {
+  status: number;
+  statusText: string;
+  detail?: string;
+  body?: string;
+  contentType: string | null;
+
+  constructor(init: HttpErrorInit) {
+    const statusLabel = init.statusText ? `${init.status} ${init.statusText}` : `${init.status}`;
+    const fallback = init.status ? `Request failed with status ${statusLabel}` : "Request failed";
+    const message = init.detail?.trim() || init.body?.trim() || fallback;
+    super(message);
+    this.name = "HttpError";
+    this.status = init.status;
+    this.statusText = init.statusText;
+    this.detail = init.detail;
+    this.body = init.body;
+    this.contentType = init.contentType ?? null;
+    Object.setPrototypeOf(this, HttpError.prototype);
+  }
+}
+
 function resolveApiUrl(path: string): string {
   if (!envApiBase) {
     return path;
@@ -169,6 +199,57 @@ function resolveApiUrl(path: string): string {
 }
 
 
+function extractHttpErrorDetail(bodyText: string, contentType: string | null): string | undefined {
+  const trimmed = bodyText.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (contentType?.includes("application/json")) {
+    const detail = parseJsonErrorDetail(trimmed);
+    if (detail) {
+      return detail;
+    }
+  }
+  return trimmed;
+}
+
+function parseJsonErrorDetail(body: string): string | undefined {
+  try {
+    const data = JSON.parse(body);
+    if (typeof data === "string") {
+      return data;
+    }
+    if (!data || typeof data !== "object") {
+      return undefined;
+    }
+    const record = data as Record<string, unknown>;
+    const detailValue = record.detail;
+    if (typeof detailValue === "string") {
+      return detailValue;
+    }
+    if (Array.isArray(detailValue)) {
+      const messages: string[] = [];
+      for (const entry of detailValue) {
+        if (typeof entry === "string") {
+          messages.push(entry);
+        }
+      }
+      if (messages.length > 0) {
+        return messages.join("; ");
+      }
+    }
+    for (const key of ["error", "message", "msg"]) {
+      const value = record[key];
+      if (typeof value === "string") {
+        return value;
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
 async function http<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(resolveApiUrl(path), {
     headers: {
@@ -177,11 +258,19 @@ async function http<T>(path: string, options: RequestInit = {}): Promise<T> {
     },
     ...options,
   });
+  const contentType = response.headers.get("content-type");
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `Request failed with status ${response.status}`);
+    const bodyText = await response.text();
+    const detail = extractHttpErrorDetail(bodyText, contentType);
+    throw new HttpError({
+      status: response.status,
+      statusText: response.statusText,
+      detail,
+      body: bodyText,
+      contentType,
+    });
   }
-  if (response.headers.get("content-type")?.includes("application/json")) {
+  if (contentType?.includes("application/json")) {
     return (await response.json()) as T;
   }
   const text = await response.text();
