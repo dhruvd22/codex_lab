@@ -36,6 +36,8 @@ const levelStyles: Record<string, string> = {
   CRITICAL: "text-rose-400 font-semibold",
 };
 
+const MONOSPACE_LOG_TEXT = "font-mono tabular-nums whitespace-pre-wrap break-words";
+
 function serializeDetails(entry: LogEntry): string | null {
   const blocks: string[] = [];
   if (entry.payload && Object.keys(entry.payload).length > 0) {
@@ -328,10 +330,14 @@ export function LoggingPanel(): JSX.Element {
                   </td>
                   <td className="px-3 py-2 align-top text-slate-300">{entry.event ?? "—"}</td>
                   <td className="px-3 py-2 align-top text-slate-300">{entry.run_id ?? "—"}</td>
-                  <td className="px-3 py-2 align-top text-slate-100">{entry.message}</td>
+                  <td className={`px-3 py-2 align-top text-slate-100 ${MONOSPACE_LOG_TEXT}`}>
+                    {entry.message}
+                  </td>
                   <td className="px-3 py-2 align-top text-slate-300">
                     {details ? (
-                      <pre className="max-h-44 overflow-auto whitespace-pre-wrap rounded bg-slate-950/60 p-2 text-xs text-slate-200">
+                      <pre
+                        className={`max-h-44 overflow-auto rounded bg-slate-950/60 p-2 text-xs text-slate-200 leading-relaxed ${MONOSPACE_LOG_TEXT}`}
+                      >
                         {details}
                       </pre>
                     ) : (
