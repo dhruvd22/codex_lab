@@ -8,6 +8,10 @@ Multi-agent workflow with a deterministic Planner -> Decomposer -> Reviewer grap
 
 The module now ships with a built-in observability layer. Every Agent, API surface, and storage hop emits structured logs that are collected into an interactive UI dashboard and a `/observability` API snapshot so you can spot latency regressions or unhealthy modules before shipping changes.
 
+## Modules
+- **Project Planner** - streaming ingestion and planning exposed at `/api/codingconductor`.
+- **The Coding Orchestrator** - milestone-driven prompt synthesis exposed at `/api/orchestrator` with explicit approval checkpoints.
+
 ## Install & Run
 1. Clone the repo, create a virtual environment, and install the API module.
    ```bash
@@ -56,6 +60,7 @@ Copy the template and edit values before running (`cp projectplanner/.env.exampl
 - **LANGFUSE_PUBLIC_KEY**, **LANGFUSE_SECRET_KEY** — optional observability keys if you wire up Langfuse.
 
 ## API
+### Project Planner (`/api/codingconductor`)
 - `POST /api/codingconductor/ingest`
   - **Request**: `{ "blueprint": string, "filename"?: string, "format_hint"?: "pdf" | "md" | "docx" | "txt" }`
   - **Response**: `{ "run_id": string, "stats": { "word_count": number, "char_count": number, "chunk_count": number } }`
@@ -72,6 +77,22 @@ Copy the template and edit values before running (`cp projectplanner/.env.exampl
   - **Response**: `{ "generated_at": string, "nodes": ObservabilityNode[], "edges": ObservabilityEdge[], "calls": ObservabilityCall[] }` representing the live workflow graph.
 
 - `POST /api/codingconductor/export`
+
+### The Coding Orchestrator (`/api/orchestrator`)
+- `POST /api/orchestrator/runs`
+  - **Request**: same payload as ingestion (`IngestionRequest`).
+  - **Response**: `{ "run_id": string, "summary": BlueprintSummary, "source": string|null }`.
+- `POST /api/orchestrator/runs/{run_id}/summary/decision`
+  - Approve or reject the summary checkpoint (`{ "approved": bool }`).
+- `POST /api/orchestrator/runs/{run_id}/milestones`
+  - Generates a five-milestone plan plus a graph coverage snapshot once the summary is approved.
+- `POST /api/orchestrator/runs/{run_id}/milestones/decision` and `POST /api/orchestrator/runs/{run_id}/prompts`
+  - Approve milestones, then request high-signal milestone prompts for autonomous agents.
+- `POST /api/orchestrator/runs/{run_id}/finalize` / `GET /api/orchestrator/runs/{run_id}/result`
+  - Returns the consolidated `OrchestratorResult` bundle (summary, milestones, prompts, graph coverage).
+- `GET /api/orchestrator/runs`
+  - Lists active orchestrator sessions with approval progress.
+
   - **Request**: `{ "run_id": string, "format": "yaml" | "jsonl" | "md" }`
   - **Response**: streamed attachment matching the requested format with `Content-Disposition: attachment`.
 

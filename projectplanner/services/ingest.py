@@ -39,6 +39,13 @@ class IngestionResult:
     chunks: Sequence[StoredChunk]
 
 
+
+def decode_blueprint_payload(payload: IngestionRequest) -> tuple[str, str]:
+    """Decode the submitted blueprint into text and its source label."""
+
+    return _decode_blueprint(payload)
+
+
 async def ingest_document(payload: IngestionRequest, *, store: ProjectPlannerStore) -> IngestionResponse:
     """Ingest blueprint content, persist chunks, and return run metadata."""
 
@@ -56,7 +63,7 @@ async def ingest_document(payload: IngestionRequest, *, store: ProjectPlannerSto
             },
         },
     )
-    raw_text, source = _decode_blueprint(payload)
+    raw_text, source = decode_blueprint_payload(payload)
     LOGGER.info(
         "Loaded blueprint for run %s from %s",
         run_id,

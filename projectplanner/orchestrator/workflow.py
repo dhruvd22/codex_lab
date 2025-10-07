@@ -188,6 +188,50 @@ class CodingOrchestrator:
         )
         return result
 
+    def regenerate_summary(self) -> BlueprintSummary:
+        """Regenerate the blueprint summary using the stored blueprint text."""
+
+        if not self._blueprint_text:
+            raise RuntimeError("No blueprint available to regenerate summary.")
+        return self.ingest_blueprint(self._blueprint_text)
+
+    def get_summary(self) -> Optional[BlueprintSummary]:
+        return self._summary
+
+    def get_milestone_plan(self) -> Optional[MilestonePlan]:
+        return self._milestones
+
+    def get_graph_snapshot(self) -> Optional[GraphCoverageSnapshot]:
+        return self._graph_snapshot
+
+    def current_graph_snapshot(self) -> GraphCoverageSnapshot:
+        if self._graph_snapshot is not None:
+            return self._graph_snapshot
+        return self._graph_store.snapshot()
+
+    def get_prompts(self) -> Optional[PromptBundle]:
+        return self._prompts
+
+    @property
+    def summary_ready(self) -> bool:
+        return self._summary is not None
+
+    @property
+    def summary_approved(self) -> bool:
+        return self._summary_approved
+
+    @property
+    def milestones_ready(self) -> bool:
+        return self._milestones is not None
+
+    @property
+    def milestones_approved(self) -> bool:
+        return self._milestones_approved
+
+    @property
+    def prompts_ready(self) -> bool:
+        return self._prompts is not None
+
     @staticmethod
     def _read_blueprint(source: str | Path) -> str:
         path = Path(source)

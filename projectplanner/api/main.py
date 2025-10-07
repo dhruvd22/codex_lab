@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
-from projectplanner.api.routers import prompts
+from projectplanner.api.routers import orchestrator, prompts
 from projectplanner.config import get_setting
 from projectplanner.logging_utils import configure_logging, get_logger
 from projectplanner.services.store import ProjectPlannerStore
@@ -119,7 +119,16 @@ def create_app() -> FastAPI:
     )
     app.state.store = store
 
-    app.include_router(prompts.router, prefix="/api/codingconductor", tags=["codingconductor"])
+    app.include_router(
+        prompts.router,
+        prefix="/api/codingconductor",
+        tags=["project-planner"],
+    )
+    app.include_router(
+        orchestrator.router,
+        prefix="/api/orchestrator",
+        tags=["the-coding-orchestrator"],
+    )
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz() -> JSONResponse:
@@ -210,10 +219,27 @@ def _render_landing_page(modules: Sequence[FrontendModule]) -> str:
             """
             <a class="module-card" href="{href}">
               <span class="module-name">{title}</span>
-              <span class="module-action">Launch</span>
+              <span class="module-action">Launch UI</span>
             </a>
             """.format(href=module.launch_href, title=escape(module.title))
         )
+
+    module_cards.append(
+        dedent("""
+        <a class="module-card" href="/docs#tag-project-planner">
+          <span class="module-name">Project Planner</span>
+          <span class="module-action">Explore API</span>
+        </a>
+        """)
+    )
+    module_cards.append(
+        dedent("""
+        <a class="module-card" href="/docs#tag-the-coding-orchestrator">
+          <span class="module-name">The Coding Orchestrator</span>
+          <span class="module-action">Explore API</span>
+        </a>
+        """)
+    )
 
     if module_cards:
         modules_markup = "\n".join(card.strip() for card in module_cards)
@@ -329,7 +355,7 @@ def _render_landing_page(modules: Sequence[FrontendModule]) -> str:
               </div>
               <footer>
                 <span>Status: {status_text}</span>
-                <span>API root: <code>/api/codingconductor</code></span>
+                <span>API roots: <code>/api/codingconductor</code> (Project Planner), <code>/api/orchestrator</code> (The Coding Orchestrator)</span>
               </footer>
             </main>
           </body>

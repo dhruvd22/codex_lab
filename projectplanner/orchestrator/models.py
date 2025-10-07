@@ -82,6 +82,57 @@ class OrchestratorResult(BaseModel):
     generated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class OrchestratorSummaryEnvelope(BaseModel):
+    """Response returned when a new orchestrator run is created."""
+
+    run_id: str
+    summary: BlueprintSummary
+    source: Optional[str] = None
+
+
+class SummaryDecision(BaseModel):
+    """Caller approval payload for summary and milestone checkpoints."""
+
+    approved: bool
+
+
+class OrchestratorMilestonesEnvelope(BaseModel):
+    """Milestone bundle paired with graph coverage context."""
+
+    run_id: str
+    milestones: MilestonePlan
+    graph: GraphCoverageSnapshot
+
+
+class OrchestratorPromptsEnvelope(BaseModel):
+    """Prompt bundle returned after milestone approvals."""
+
+    run_id: str
+    prompts: PromptBundle
+
+
+class OrchestratorApprovalResponse(BaseModel):
+    """Approval acknowledgement shared with API clients."""
+
+    run_id: str
+    stage: Literal["summary", "milestones"]
+    approved: bool
+
+
+class OrchestratorSessionStatus(BaseModel):
+    """Lightweight snapshot of orchestrator session progress."""
+
+    run_id: str
+    source: Optional[str] = None
+    summary_ready: bool = False
+    summary_approved: bool = False
+    milestones_ready: bool = False
+    milestones_approved: bool = False
+    prompts_ready: bool = False
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 __all__ = [
     "BlueprintSummary",
     "Milestone",
@@ -91,4 +142,10 @@ __all__ = [
     "GraphNode",
     "GraphCoverageSnapshot",
     "OrchestratorResult",
+    "OrchestratorSummaryEnvelope",
+    "SummaryDecision",
+    "OrchestratorMilestonesEnvelope",
+    "OrchestratorPromptsEnvelope",
+    "OrchestratorApprovalResponse",
+    "OrchestratorSessionStatus",
 ]
