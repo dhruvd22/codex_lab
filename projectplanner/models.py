@@ -29,14 +29,31 @@ class IngestionRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    @model_validator(mode="after")
-    def ensure_blueprint_present(cls, values: "IngestionRequest") -> "IngestionRequest":
+    @model_validator(mode="before")
+    def ensure_blueprint_present(cls, data: Any) -> Any:
         """Ensure a blueprint payload is always provided."""
 
-        blueprint = (values.blueprint or "").strip()
+        if not isinstance(data, dict):
+            return data
+
+        raw_blueprint = data.get("blueprint")
+        if raw_blueprint is None:
+            raw_blueprint = data.get("text")
+
+        if raw_blueprint is None:
+            raise ValueError("Blueprint content must be provided for ingestion.")
+
+        if isinstance(raw_blueprint, bytes):
+            blueprint_text = raw_blueprint.decode("utf-8", errors="ignore")
+        else:
+            blueprint_text = str(raw_blueprint)
+
+        blueprint = blueprint_text.strip()
         if not blueprint:
             raise ValueError("Blueprint content must be provided for ingestion.")
-        return values
+
+        data["blueprint"] = blueprint
+        return data
 
 
 class DocumentStats(BaseModel):
