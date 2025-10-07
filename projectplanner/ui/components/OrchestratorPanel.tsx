@@ -108,6 +108,65 @@ export function OrchestratorPanel(): JSX.Element {
     },
     [],
   );
+  useEffect(() => {
+    if (selectedRunId || isBusy || orderedRuns.length === 0) {
+      return;
+    }
+    const next = orderedRuns[0];
+    if (next) {
+      loadSession(next.run_id, "auto-load").catch(() => undefined);
+    }
+  }, [orderedRuns, selectedRunId, isBusy, loadSession]);
+
+  useEffect(() => {
+    if (!selectedRunId) {
+      return;
+    }
+    if (runs.some((run) => run.run_id === selectedRunId)) {
+      return;
+    }
+    setSelectedRunId(null);
+    setStatus(null);
+    setSummary(null);
+    setMilestones(null);
+    setPrompts(null);
+    setResult(null);
+  }, [runs, selectedRunId]);
+
+  useEffect(() => {
+    if (!selectedRunId || isBusy) {
+      return;
+    }
+    const latest = runs.find((run) => run.run_id === selectedRunId);
+    if (!latest) {
+      return;
+    }
+
+    setStatus((current) => {
+      if (
+        !current ||
+        current.updated_at !== latest.updated_at ||
+        current.summary_ready !== latest.summary_ready ||
+        current.summary_approved !== latest.summary_approved ||
+        current.milestones_ready !== latest.milestones_ready ||
+        current.milestones_approved !== latest.milestones_approved ||
+        current.prompts_ready !== latest.prompts_ready ||
+        current.source !== latest.source
+      ) {
+        return latest;
+      }
+      return current;
+    });
+
+    const needsSummary = latest.summary_ready && !summary;
+    const needsMilestones = latest.milestones_ready && !milestones;
+    const needsPrompts = latest.prompts_ready && !prompts;
+
+    if (needsSummary || needsMilestones || needsPrompts) {
+      loadSession(latest.run_id, "sync").catch(() => undefined);
+    }
+  }, [selectedRunId, runs, summary, milestones, prompts, isBusy, loadSession]);
+
 
   const handleSelectRun = useCallback(
     async (runId: string) => {
@@ -120,7 +179,11 @@ export function OrchestratorPanel(): JSX.Element {
         setResult(null);
         return;
       }
-      await loadSession(runId);
+      try {
+        await loadSession(runId);
+      } catch {
+        /* handled via loadSession banner */
+      }
     },
     [loadSession],
   );
@@ -274,10 +337,14 @@ export function OrchestratorPanel(): JSX.Element {
   }, [selectedRunId, refreshRuns]);
 
   const handleRefresh = useCallback(async () => {
-    if (selectedRunId) {
-      await Promise.all([refreshRuns(), loadSession(selectedRunId)]);
-    } else {
-      await refreshRuns();
+    try {
+      if (selectedRunId) {
+        await Promise.all([refreshRuns(), loadSession(selectedRunId)]);
+      } else {
+        await refreshRuns();
+      }
+    } catch {
+      /* handled via loadSession banner */
     }
   }, [selectedRunId, refreshRuns, loadSession]);
 
