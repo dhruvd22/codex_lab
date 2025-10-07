@@ -105,6 +105,33 @@ MODULE_DEFINITIONS: Sequence[ModuleDefinition] = (
         duration_pairs=(("planning.reviewer.start", "planning.reviewer.complete"),),
     ),
     ModuleDefinition(
+        id="orchestrator_summary",
+        name="Orchestrator Summary",
+        category="orchestrator",
+        description="Synthesizes blueprint summaries for The Coding Orchestrator.",
+        event_prefixes=("orchestrator.summary.",),
+        prompt_agents=("MilestonesAgent",),
+        duration_pairs=(("orchestrator.summary.start", "orchestrator.summary.prepared"),),
+    ),
+    ModuleDefinition(
+        id="orchestrator_milestones",
+        name="Orchestrator Milestones",
+        category="orchestrator",
+        description="Generates milestone plans and validates graph coverage.",
+        event_prefixes=("orchestrator.milestones.", "orchestrator.graphaudit."),
+        prompt_agents=("MilestonesAgent", "GraphAuditAgent"),
+        duration_pairs=(("orchestrator.milestones.start", "orchestrator.milestones.prepared"),),
+    ),
+    ModuleDefinition(
+        id="orchestrator_prompts",
+        name="Orchestrator Prompt Planner",
+        category="orchestrator",
+        description="Produces milestone execution prompts for autonomous coders.",
+        event_prefixes=("orchestrator.prompts.",),
+        prompt_agents=("AgentPlanner",),
+        duration_pairs=(("orchestrator.prompts.start", "orchestrator.prompts.generated"),),
+    ),
+    ModuleDefinition(
         id="api_export",
         name="Export Endpoint",
         category="endpoint",
@@ -128,6 +155,9 @@ EDGE_DEFINITIONS: Sequence[Tuple[str, str, Optional[str]]] = (
     ("reviewer_agent", "api_plan", "Return feedback"),
     ("planner_agent", "document_store", "Store plan artifacts"),
     ("api_plan", "api_export", "Finalize outputs"),
+    ("ingestion_pipeline", "orchestrator_summary", "Summarize blueprint"),
+    ("orchestrator_summary", "orchestrator_milestones", "Confirm summary"),
+    ("orchestrator_milestones", "orchestrator_prompts", "Deliver prompts"),
     ("document_store", "api_export", "Read artifacts"),
 )
 
