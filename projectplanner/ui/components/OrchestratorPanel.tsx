@@ -1,4 +1,4 @@
-﻿import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createOrchestratorRun,
@@ -40,6 +40,61 @@ export function OrchestratorPanel(): JSX.Element {
   const [banner, setBanner] = useState<Banner>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
+  const loadRequestIdRef = useRef(0);
+
+  const mergeRunSnapshot = useCallback((runId: string, patch: Partial<OrchestratorSessionStatus>) => {
+    const cleaned = omitUndefined(patch);
+    if (Object.keys(cleaned).length === 0) {
+      return;
+    }
+    const now = new Date().toISOString();
+    setRuns((previous) => {
+      let found = false;
+      const next = previous.map((run) => {
+        if (run.run_id !== runId) {
+          return run;
+        }
+        found = true;
+        const merged: OrchestratorSessionStatus = {
+          ...run,
+          ...cleaned,
+          created_at: typeof cleaned.created_at === "string" ? cleaned.created_at : run.created_at,
+          updated_at: typeof cleaned.updated_at === "string" ? cleaned.updated_at : now,
+          source:
+            ("source" in cleaned ? (cleaned.source as string | null | undefined) : undefined) ?? run.source ?? null,
+        };
+        return merged;
+      });
+      if (!found) {
+        next.push({
+          run_id: runId,
+          source: ("source" in cleaned ? (cleaned.source as string | null | undefined) : null) ?? null,
+          summary_ready: cleaned.summary_ready ?? false,
+          summary_approved: cleaned.summary_approved ?? false,
+          milestones_ready: cleaned.milestones_ready ?? false,
+          milestones_approved: cleaned.milestones_approved ?? false,
+          prompts_ready: cleaned.prompts_ready ?? false,
+          created_at: cleaned.created_at ?? now,
+          updated_at: cleaned.updated_at ?? now,
+        });
+      }
+      return next;
+    });
+    setStatus((current) => {
+      if (!current || current.run_id !== runId) {
+        return current;
+      }
+      return {
+        ...current,
+        ...cleaned,
+        created_at: typeof cleaned.created_at === "string" ? cleaned.created_at : current.created_at,
+        updated_at: typeof cleaned.updated_at === "string" ? cleaned.updated_at : current.updated_at,
+        source:
+          ("source" in cleaned ? (cleaned.source as string | null | undefined) : undefined) ?? current.source ?? null,
+      };
+    });
+  }, []);
+
   const orderedRuns = useMemo(() => {
     return runs.slice().sort((a, b) => new Date(b.updated_at).valueOf() - new Date(a.updated_at).valueOf());
   }, [runs]);
@@ -50,8 +105,15 @@ export function OrchestratorPanel(): JSX.Element {
     try {
       const data = await listOrchestratorRuns();
       setRuns(data);
+      setStatus((current) => {
+        if (!current) {
+          return current;
+        }
+        const latest = data.find((run) => run.run_id === current.run_id);
+        return latest ? { ...current, ...latest } : current;
+      });
     } catch (error) {
-      setBanner({ type: "error", message: (error as Error).message });
+      setBanner({ type: "error", message: buildErrorMessage("Unable to refresh orchestrator runs", error) });
     }
   }, []);
 
@@ -78,35 +140,90 @@ export function OrchestratorPanel(): JSX.Element {
 
   const loadSession = useCallback(
     async (runId: string, actionLabel: string = "loading") => {
+      const requestId = ++loadRequestIdRef.current;
       setBusyAction(actionLabel);
       setBanner(null);
       try {
         const nextStatus = await getOrchestratorRun(runId);
-        setStatus(nextStatus);
+        if (requestId !== loadRequestIdRef.current) {
+          return;
+        }
         setSelectedRunId(runId);
+        setStatus(nextStatus);
+        mergeRunSnapshot(runId, nextStatus);
 
-        const [summaryEnvelope, milestonesEnvelope, promptsEnvelope] = await Promise.all([
-          nextStatus.summary_ready ? getOrchestratorSummary(runId) : Promise.resolve<OrchestratorSummaryEnvelope | null>(null),
-          nextStatus.milestones_ready
-            ? getOrchestratorMilestones(runId)
-            : Promise.resolve<OrchestratorMilestonesEnvelope | null>(null),
-          nextStatus.prompts_ready
-            ? getOrchestratorPrompts(runId)
-            : Promise.resolve<OrchestratorPromptsEnvelope | null>(null),
-        ]);
+        if (!nextStatus.prompts_ready) {
+          setResult(null);
+        }
 
-        setSummary(summaryEnvelope);
-        setMilestones(milestonesEnvelope);
-        setPrompts(promptsEnvelope);
-        setResult(null);
+        let summaryEnvelope: OrchestratorSummaryEnvelope | null = null;
+        if (nextStatus.summary_ready) {
+          try {
+            summaryEnvelope = await getOrchestratorSummary(runId);
+          } catch (error) {
+            if (requestId === loadRequestIdRef.current) {
+              setBanner({ type: "error", message: buildErrorMessage("Unable to load summary", error) });
+            }
+          }
+        }
+        if (requestId !== loadRequestIdRef.current) {
+          return;
+        }
+        if (summaryEnvelope) {
+          setSummary(summaryEnvelope);
+        } else if (!nextStatus.summary_ready) {
+          setSummary(null);
+        }
+
+        let milestonesEnvelope: OrchestratorMilestonesEnvelope | null = null;
+        if (nextStatus.milestones_ready) {
+          try {
+            milestonesEnvelope = await getOrchestratorMilestones(runId);
+          } catch (error) {
+            if (requestId === loadRequestIdRef.current) {
+              setBanner({ type: "error", message: buildErrorMessage("Unable to load milestones", error) });
+            }
+          }
+        }
+        if (requestId !== loadRequestIdRef.current) {
+          return;
+        }
+        if (milestonesEnvelope) {
+          setMilestones(milestonesEnvelope);
+        } else if (!nextStatus.milestones_ready) {
+          setMilestones(null);
+        }
+
+        let promptsEnvelope: OrchestratorPromptsEnvelope | null = null;
+        if (nextStatus.prompts_ready) {
+          try {
+            promptsEnvelope = await getOrchestratorPrompts(runId);
+          } catch (error) {
+            if (requestId === loadRequestIdRef.current) {
+              setBanner({ type: "error", message: buildErrorMessage("Unable to load prompts", error) });
+            }
+          }
+        }
+        if (requestId !== loadRequestIdRef.current) {
+          return;
+        }
+        if (promptsEnvelope) {
+          setPrompts(promptsEnvelope);
+        } else if (!nextStatus.prompts_ready) {
+          setPrompts(null);
+        }
       } catch (error) {
-        setBanner({ type: "error", message: (error as Error).message });
+        if (requestId === loadRequestIdRef.current) {
+          setBanner({ type: "error", message: buildErrorMessage("Unable to load orchestrator run", error) });
+        }
         throw error;
       } finally {
-        setBusyAction(null);
+        if (requestId === loadRequestIdRef.current) {
+          setBusyAction(null);
+        }
       }
     },
-    [],
+    [mergeRunSnapshot],
   );
   useEffect(() => {
     if (selectedRunId || isBusy || orderedRuns.length === 0) {
@@ -153,7 +270,7 @@ export function OrchestratorPanel(): JSX.Element {
         current.prompts_ready !== latest.prompts_ready ||
         current.source !== latest.source
       ) {
-        return latest;
+        return { ...current, ...latest };
       }
       return current;
     });
@@ -182,7 +299,7 @@ export function OrchestratorPanel(): JSX.Element {
       try {
         await loadSession(runId);
       } catch {
-        /* handled via loadSession banner */
+        /* errors surfaced via respective handlers */
       }
     },
     [loadSession],
@@ -206,15 +323,34 @@ export function OrchestratorPanel(): JSX.Element {
         format_hint: pickFormatHint(file),
       });
       setFile(null);
+      const now = new Date().toISOString();
+      const snapshot: OrchestratorSessionStatus = {
+        run_id: response.run_id,
+        source: response.source ?? null,
+        summary_ready: true,
+        summary_approved: false,
+        milestones_ready: false,
+        milestones_approved: false,
+        prompts_ready: false,
+        created_at: now,
+        updated_at: now,
+      };
+      setSelectedRunId(response.run_id);
+      setStatus(snapshot);
+      setSummary(response);
+      setMilestones(null);
+      setPrompts(null);
+      setResult(null);
+      mergeRunSnapshot(response.run_id, snapshot);
       setBanner({ type: "info", message: `Orchestrator run ${response.run_id} created.` });
       await refreshRuns();
       await loadSession(response.run_id);
     } catch (error) {
-      setBanner({ type: "error", message: (error as Error).message });
+      setBanner({ type: "error", message: buildErrorMessage("Unable to create orchestrator run", error) });
     } finally {
       setBusyAction(null);
     }
-  }, [file, pickFormatHint, refreshRuns, loadSession]);
+  }, [file, pickFormatHint, refreshRuns, loadSession, mergeRunSnapshot]);
 
   const handleRegenerateSummary = useCallback(async () => {
     if (!selectedRunId) {
@@ -223,16 +359,29 @@ export function OrchestratorPanel(): JSX.Element {
     setBusyAction("regenerate");
     setBanner(null);
     try {
-      await regenerateOrchestratorSummary(selectedRunId);
+      const envelope = await regenerateOrchestratorSummary(selectedRunId);
+      setSummary(envelope);
+      setMilestones(null);
+      setPrompts(null);
+      setResult(null);
+      const now = new Date().toISOString();
+      mergeRunSnapshot(selectedRunId, {
+        summary_ready: true,
+        summary_approved: false,
+        milestones_ready: false,
+        milestones_approved: false,
+        prompts_ready: false,
+        updated_at: now,
+      });
+      setBanner({ type: "info", message: "Summary regenerated." });
       await refreshRuns();
       await loadSession(selectedRunId);
-      setBanner({ type: "info", message: "Summary regenerated." });
     } catch (error) {
-      setBanner({ type: "error", message: (error as Error).message });
+      setBanner({ type: "error", message: buildErrorMessage("Unable to regenerate summary", error) });
     } finally {
       setBusyAction(null);
     }
-  }, [selectedRunId, refreshRuns, loadSession]);
+  }, [selectedRunId, refreshRuns, loadSession, mergeRunSnapshot]);
 
   const handleSummaryDecision = useCallback(
     async (approved: boolean) => {
@@ -243,19 +392,21 @@ export function OrchestratorPanel(): JSX.Element {
       setBanner(null);
       try {
         await submitOrchestratorSummaryDecision(selectedRunId, approved);
-        await refreshRuns();
-        await loadSession(selectedRunId);
+        const now = new Date().toISOString();
+        mergeRunSnapshot(selectedRunId, { summary_approved: approved, updated_at: now });
         setBanner({
           type: "info",
           message: approved ? "Summary approved." : "Summary marked for revision.",
         });
+        await refreshRuns();
+        await loadSession(selectedRunId);
       } catch (error) {
-        setBanner({ type: "error", message: (error as Error).message });
+        setBanner({ type: "error", message: buildErrorMessage("Unable to record summary decision", error) });
       } finally {
         setBusyAction(null);
       }
     },
-    [selectedRunId, refreshRuns, loadSession],
+    [selectedRunId, refreshRuns, loadSession, mergeRunSnapshot],
   );
 
   const handleGenerateMilestones = useCallback(async () => {
@@ -265,16 +416,23 @@ export function OrchestratorPanel(): JSX.Element {
     setBusyAction("milestones");
     setBanner(null);
     try {
-      await generateOrchestratorMilestones(selectedRunId);
+      const envelope = await generateOrchestratorMilestones(selectedRunId);
+      setMilestones(envelope);
+      const now = new Date().toISOString();
+      mergeRunSnapshot(selectedRunId, {
+        milestones_ready: true,
+        milestones_approved: false,
+        updated_at: now,
+      });
+      setBanner({ type: "info", message: "Milestones generated." });
       await refreshRuns();
       await loadSession(selectedRunId);
-      setBanner({ type: "info", message: "Milestones generated." });
     } catch (error) {
-      setBanner({ type: "error", message: (error as Error).message });
+      setBanner({ type: "error", message: buildErrorMessage("Unable to generate milestones", error) });
     } finally {
       setBusyAction(null);
     }
-  }, [selectedRunId, refreshRuns, loadSession]);
+  }, [selectedRunId, refreshRuns, loadSession, mergeRunSnapshot]);
 
   const handleMilestoneDecision = useCallback(
     async (approved: boolean) => {
@@ -285,19 +443,21 @@ export function OrchestratorPanel(): JSX.Element {
       setBanner(null);
       try {
         await submitOrchestratorMilestonesDecision(selectedRunId, approved);
-        await refreshRuns();
-        await loadSession(selectedRunId);
+        const now = new Date().toISOString();
+        mergeRunSnapshot(selectedRunId, { milestones_approved: approved, updated_at: now });
         setBanner({
           type: "info",
           message: approved ? "Milestones approved." : "Milestones marked for revision.",
         });
+        await refreshRuns();
+        await loadSession(selectedRunId);
       } catch (error) {
-        setBanner({ type: "error", message: (error as Error).message });
+        setBanner({ type: "error", message: buildErrorMessage("Unable to record milestone decision", error) });
       } finally {
         setBusyAction(null);
       }
     },
-    [selectedRunId, refreshRuns, loadSession],
+    [selectedRunId, refreshRuns, loadSession, mergeRunSnapshot],
   );
 
   const handleGeneratePrompts = useCallback(async () => {
@@ -307,16 +467,18 @@ export function OrchestratorPanel(): JSX.Element {
     setBusyAction("prompts");
     setBanner(null);
     try {
-      await generateOrchestratorPrompts(selectedRunId);
+      const envelope = await generateOrchestratorPrompts(selectedRunId);
+      setPrompts(envelope);
+      mergeRunSnapshot(selectedRunId, { prompts_ready: true, updated_at: new Date().toISOString() });
+      setBanner({ type: "info", message: "Prompt bundle generated." });
       await refreshRuns();
       await loadSession(selectedRunId);
-      setBanner({ type: "info", message: "Prompt bundle generated." });
     } catch (error) {
-      setBanner({ type: "error", message: (error as Error).message });
+      setBanner({ type: "error", message: buildErrorMessage("Unable to generate prompts", error) });
     } finally {
       setBusyAction(null);
     }
-  }, [selectedRunId, refreshRuns, loadSession]);
+  }, [selectedRunId, refreshRuns, loadSession, mergeRunSnapshot]);
 
   const handleFinalize = useCallback(async () => {
     if (!selectedRunId) {
@@ -327,14 +489,15 @@ export function OrchestratorPanel(): JSX.Element {
     try {
       const payload = await finalizeOrchestratorRun(selectedRunId);
       setResult(payload);
+      mergeRunSnapshot(selectedRunId, { updated_at: new Date().toISOString() });
       setBanner({ type: "info", message: "Orchestrator result assembled." });
       await refreshRuns();
     } catch (error) {
-      setBanner({ type: "error", message: (error as Error).message });
+      setBanner({ type: "error", message: buildErrorMessage("Unable to finalize orchestrator run", error) });
     } finally {
       setBusyAction(null);
     }
-  }, [selectedRunId, refreshRuns]);
+  }, [selectedRunId, refreshRuns, mergeRunSnapshot]);
 
   const handleRefresh = useCallback(async () => {
     try {
@@ -344,7 +507,7 @@ export function OrchestratorPanel(): JSX.Element {
         await refreshRuns();
       }
     } catch {
-      /* handled via loadSession banner */
+      /* errors surfaced via respective handlers */
     }
   }, [selectedRunId, refreshRuns, loadSession]);
 
@@ -356,6 +519,7 @@ export function OrchestratorPanel(): JSX.Element {
     setBanner(null);
     try {
       await deleteOrchestratorRun(selectedRunId);
+      setRuns((previous) => previous.filter((run) => run.run_id !== selectedRunId));
       setSelectedRunId(null);
       setStatus(null);
       setSummary(null);
@@ -365,7 +529,7 @@ export function OrchestratorPanel(): JSX.Element {
       await refreshRuns();
       setBanner({ type: "info", message: "Run discarded." });
     } catch (error) {
-      setBanner({ type: "error", message: (error as Error).message });
+      setBanner({ type: "error", message: buildErrorMessage("Unable to delete orchestrator run", error) });
     } finally {
       setBusyAction(null);
     }
@@ -450,7 +614,7 @@ export function OrchestratorPanel(): JSX.Element {
           className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200"
           disabled={isBusy || orderedRuns.length === 0}
         >
-          <option value="">Select a run…</option>
+          <option value="">Select a run.</option>
           {orderedRuns.map((run) => (
             <option key={run.run_id} value={run.run_id}>
               {formatRunLabel(run)}
@@ -481,7 +645,7 @@ export function OrchestratorPanel(): JSX.Element {
             {banner.message}
           </div>
         )}
-        {busyAction && <p className="text-xs text-slate-500">Working on: {busyAction}…</p>}
+        {busyAction && <p className="text-xs text-slate-500">Working on: {busyAction}.</p>}
       </div>
 
       <div className="space-y-6">
@@ -770,7 +934,7 @@ function formatRunLabel(run: OrchestratorSessionStatus): string {
       : "milestones ready"
     : "milestones pending";
   const promptState = run.prompts_ready ? "prompts ready" : "prompts pending";
-  return `${run.run_id} — ${summaryState}, ${milestoneState}, ${promptState}`;
+  return `${run.run_id} - ${summaryState}, ${milestoneState}, ${promptState}`;
 }
 
 async function fileToBlueprint(file: File): Promise<string> {
@@ -793,3 +957,41 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
+
+function buildErrorMessage(context: string, error: unknown): string {
+  const detail = extractErrorDetail(error);
+  return detail ? `${context}: ${detail}` : `${context}: Unexpected error.`;
+}
+
+function extractErrorDetail(error: unknown): string {
+  if (error instanceof Error && typeof error.message === "string") {
+    return sanitizeErrorText(error.message);
+  }
+  if (typeof error === "string") {
+    return sanitizeErrorText(error);
+  }
+  return "";
+}
+
+function sanitizeErrorText(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return "";
+  }
+  const plain = /<[a-z!/][^>]*>/i.test(trimmed) ? trimmed.replace(/<[^>]+>/g, " ") : trimmed;
+  const normalized = plain.replace(/\s+/g, " " ).trim();
+  if (!normalized) {
+    return "";
+  }
+  return normalized.length > 300 ? `${normalized.slice(0, 300).trimEnd()}...` : normalized;
+}
+
+function omitUndefined<T extends Record<string, unknown>>(input: T): T {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (value !== undefined) {
+      result[key] = value;
+    }
+  }
+  return result as T;
+}
