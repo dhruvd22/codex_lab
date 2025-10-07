@@ -32,6 +32,7 @@ const CATEGORY_META: Record<string, { title: string; order: number }> = {
   storage: { title: "Storage", order: 2 },
   agent: { title: "Agents", order: 3 },
   service: { title: "Services", order: 4 },
+  orchestrator: { title: "Orchestrator", order: 5 },
 };
 
 const STATUS_STYLES: Record<ObservabilityStatus, string> = {
@@ -813,3 +814,4 @@ function formatPayload(payload: Record<string, unknown> | null | undefined): str
     return `Unable to format payload: ${(error as Error).message}`;
   }
 }
+

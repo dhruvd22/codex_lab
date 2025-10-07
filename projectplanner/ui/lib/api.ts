@@ -114,7 +114,7 @@ export type ObservabilityStatus = "idle" | "healthy" | "degraded" | "error";
 export type ObservabilityNode = {
   id: string;
   name: string;
-  category: "endpoint" | "pipeline" | "agent" | "storage" | "service";
+  category: "endpoint" | "pipeline" | "agent" | "storage" | "service" | "orchestrator";
   description: string;
   status: ObservabilityStatus;
   event_count: number;
@@ -436,3 +436,191 @@ export async function downloadObservabilitySnapshot(
 
 
 
+
+export type OrchestratorBlueprintSummary = {
+  run_id: string;
+  summary: string;
+  highlights: string[];
+  risks: string[];
+  components: string[];
+  metadata: Record<string, unknown>;
+};
+
+export type OrchestratorMilestone = {
+  milestone_id: number;
+  details: string;
+  context?: string;
+};
+
+export type OrchestratorMilestonePlan = {
+  run_id: string;
+  milestones: OrchestratorMilestone[];
+  raw_response?: string | null;
+};
+
+export type OrchestratorMilestonePrompt = {
+  milestone_id: number;
+  title: string;
+  system_prompt: string;
+  user_prompt: string;
+  acceptance_criteria: string[];
+  expected_artifacts: string[];
+  references: string[];
+};
+
+export type OrchestratorPromptBundle = {
+  run_id: string;
+  prompts: OrchestratorMilestonePrompt[];
+};
+
+export type OrchestratorGraphCoverageSnapshot = {
+  run_id: string;
+  covered_nodes: string[];
+  uncovered_nodes: string[];
+  notes?: string | null;
+};
+
+export type OrchestratorSummaryEnvelope = {
+  run_id: string;
+  summary: OrchestratorBlueprintSummary;
+  source?: string | null;
+};
+
+export type OrchestratorMilestonesEnvelope = {
+  run_id: string;
+  milestones: OrchestratorMilestonePlan;
+  graph: OrchestratorGraphCoverageSnapshot;
+};
+
+export type OrchestratorPromptsEnvelope = {
+  run_id: string;
+  prompts: OrchestratorPromptBundle;
+};
+
+export type OrchestratorApprovalStage = "summary" | "milestones";
+
+export type OrchestratorApprovalResponse = {
+  run_id: string;
+  stage: OrchestratorApprovalStage;
+  approved: boolean;
+};
+
+export type OrchestratorResult = {
+  run_id: string;
+  summary: OrchestratorBlueprintSummary;
+  milestones: OrchestratorMilestonePlan;
+  prompts: OrchestratorPromptBundle;
+  graph_report: OrchestratorGraphCoverageSnapshot;
+  generated_at: string;
+};
+
+export type OrchestratorSessionStatus = {
+  run_id: string;
+  source?: string | null;
+  summary_ready: boolean;
+  summary_approved: boolean;
+  milestones_ready: boolean;
+  milestones_approved: boolean;
+  prompts_ready: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type OrchestratorDecisionRequest = {
+  approved: boolean;
+};
+
+const ORCHESTRATOR_BASE = "/api/orchestrator";
+
+export async function createOrchestratorRun(
+  payload: IngestionRequest,
+): Promise<OrchestratorSummaryEnvelope> {
+  return http<OrchestratorSummaryEnvelope>(`${ORCHESTRATOR_BASE}/runs`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listOrchestratorRuns(): Promise<OrchestratorSessionStatus[]> {
+  return http<OrchestratorSessionStatus[]>(`${ORCHESTRATOR_BASE}/runs`);
+}
+
+export async function getOrchestratorRun(runId: string): Promise<OrchestratorSessionStatus> {
+  return http<OrchestratorSessionStatus>(`${ORCHESTRATOR_BASE}/runs/${runId}`);
+}
+
+export async function deleteOrchestratorRun(runId: string): Promise<void> {
+  const response = await fetch(resolveApiUrl(`${ORCHESTRATOR_BASE}/runs/${runId}`), {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Failed to delete orchestrator run ${runId} (status ${response.status})`);
+  }
+}
+
+export async function getOrchestratorSummary(runId: string): Promise<OrchestratorSummaryEnvelope> {
+  return http<OrchestratorSummaryEnvelope>(`${ORCHESTRATOR_BASE}/runs/${runId}/summary`);
+}
+
+export async function regenerateOrchestratorSummary(runId: string): Promise<OrchestratorSummaryEnvelope> {
+  return http<OrchestratorSummaryEnvelope>(`${ORCHESTRATOR_BASE}/runs/${runId}/summary/regenerate`, {
+    method: "POST",
+  });
+}
+
+export async function submitOrchestratorSummaryDecision(
+  runId: string,
+  approved: boolean,
+): Promise<OrchestratorApprovalResponse> {
+  return http<OrchestratorApprovalResponse>(`${ORCHESTRATOR_BASE}/runs/${runId}/summary/decision`, {
+    method: "POST",
+    body: JSON.stringify({ approved }),
+  });
+}
+
+export async function generateOrchestratorMilestones(
+  runId: string,
+): Promise<OrchestratorMilestonesEnvelope> {
+  return http<OrchestratorMilestonesEnvelope>(`${ORCHESTRATOR_BASE}/runs/${runId}/milestones`, {
+    method: "POST",
+  });
+}
+
+export async function getOrchestratorMilestones(
+  runId: string,
+): Promise<OrchestratorMilestonesEnvelope> {
+  return http<OrchestratorMilestonesEnvelope>(`${ORCHESTRATOR_BASE}/runs/${runId}/milestones`);
+}
+
+export async function submitOrchestratorMilestonesDecision(
+  runId: string,
+  approved: boolean,
+): Promise<OrchestratorApprovalResponse> {
+  return http<OrchestratorApprovalResponse>(`${ORCHESTRATOR_BASE}/runs/${runId}/milestones/decision`, {
+    method: "POST",
+    body: JSON.stringify({ approved }),
+  });
+}
+
+export async function generateOrchestratorPrompts(
+  runId: string,
+): Promise<OrchestratorPromptsEnvelope> {
+  return http<OrchestratorPromptsEnvelope>(`${ORCHESTRATOR_BASE}/runs/${runId}/prompts`, {
+    method: "POST",
+  });
+}
+
+export async function getOrchestratorPrompts(runId: string): Promise<OrchestratorPromptsEnvelope> {
+  return http<OrchestratorPromptsEnvelope>(`${ORCHESTRATOR_BASE}/runs/${runId}/prompts`);
+}
+
+export async function finalizeOrchestratorRun(runId: string): Promise<OrchestratorResult> {
+  return http<OrchestratorResult>(`${ORCHESTRATOR_BASE}/runs/${runId}/finalize`, {
+    method: "POST",
+  });
+}
+
+export async function getOrchestratorResult(runId: string): Promise<OrchestratorResult> {
+  return http<OrchestratorResult>(`${ORCHESTRATOR_BASE}/runs/${runId}/result`);
+}

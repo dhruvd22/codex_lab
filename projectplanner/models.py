@@ -209,7 +209,7 @@ class ObservabilityNode(BaseModel):
 
     id: str = Field(..., description="Stable identifier for the module.")
     name: str = Field(..., description="Human-friendly module name.")
-    category: Literal["endpoint", "pipeline", "agent", "storage", "service"] = Field(
+    category: Literal["endpoint", "pipeline", "agent", "storage", "service", "orchestrator"] = Field(
         ..., description="Module category used for grouping and styling."
     )
     description: str = Field(..., description="Summary of what the module is responsible for.")
@@ -244,6 +244,7 @@ class StepUpdateRequest(BaseModel):
     """Request payload for updating stored steps."""
 
     steps: List[PromptStep]
+
 
 
 

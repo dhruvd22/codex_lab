@@ -2,10 +2,11 @@ import { ReactNode, useState } from "react";
 
 import { LoggingPanel } from "@/components/LoggingPanel";
 import { ObservabilityDashboard } from "@/components/ObservabilityDashboard";
+import { OrchestratorPanel } from "@/components/OrchestratorPanel";
 import { PromptLogPanel } from "@/components/PromptLogPanel";
 
 export function AppLayout({ children }: { children: ReactNode }): JSX.Element {
-  const [activeTab, setActiveTab] = useState<"planner" | "prompts" | "logging" | "observability">("planner");
+  const [activeTab, setActiveTab] = useState<"planner" | "orchestrator" | "prompts" | "logging" | "observability">("planner");
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -25,6 +26,19 @@ export function AppLayout({ children }: { children: ReactNode }): JSX.Element {
               }`}
             >
               Conductor
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "orchestrator"}
+              onClick={() => setActiveTab("orchestrator")}
+              className={`rounded px-3 py-1 transition ${
+                activeTab === "orchestrator"
+                  ? "bg-emerald-500 text-slate-950"
+                  : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+              }`}
+            >
+              Orchestrator
             </button>
             <button
               type="button"
@@ -78,6 +92,14 @@ export function AppLayout({ children }: { children: ReactNode }): JSX.Element {
         </div>
         <div
           role="tabpanel"
+          aria-hidden={activeTab !== "orchestrator"}
+          className={activeTab === "orchestrator" ? "" : "hidden"}
+        >
+          <OrchestratorPanel />
+        </div>
+
+        <div
+          role="tabpanel"
           aria-hidden={activeTab !== "prompts"}
           className={activeTab === "prompts" ? "" : "hidden"}
         >
@@ -103,4 +125,11 @@ export function AppLayout({ children }: { children: ReactNode }): JSX.Element {
     </div>
   );
 }
+
+
+
+
+
+
+
 
