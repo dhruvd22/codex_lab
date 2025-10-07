@@ -29,6 +29,9 @@ type FormatHint = "pdf" | "md" | "docx" | "txt" | undefined;
 
 const ACCEPTED_BLUEPRINT_TYPES = [".pdf", ".md", ".docx", ".txt"];
 
+const PROMPTS_FOLLOW_UP_INTERVAL_MS = 4000;
+const PROMPTS_FOLLOW_UP_MAX_ATTEMPTS = 10;
+
 export function OrchestratorPanel(): JSX.Element {
   const [file, setFile] = useState<File | null>(null);
   const [runs, setRuns] = useState<OrchestratorSessionStatus[]>([]);
@@ -42,6 +45,32 @@ export function OrchestratorPanel(): JSX.Element {
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
   const loadRequestIdRef = useRef(0);
+  const promptsFollowUpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const promptsFollowUpAttemptsRef = useRef(0);
+  const selectedRunIdRef = useRef<string | null>(null);
+
+  const clearPromptsFollowUp = useCallback(() => {
+    if (promptsFollowUpTimerRef.current !== null) {
+      clearTimeout(promptsFollowUpTimerRef.current);
+      promptsFollowUpTimerRef.current = null;
+    }
+    promptsFollowUpAttemptsRef.current = 0;
+  }, []);
+
+  useEffect(() => {
+    const previousRunId = selectedRunIdRef.current;
+    if (previousRunId && previousRunId !== selectedRunId) {
+      clearPromptsFollowUp();
+    }
+    selectedRunIdRef.current = selectedRunId;
+    return () => {
+      selectedRunIdRef.current = null;
+    };
+  }, [selectedRunId, clearPromptsFollowUp]);
+
+  useEffect(() => () => {
+    clearPromptsFollowUp();
+  }, [clearPromptsFollowUp]);
 
   const mergeRunSnapshot = useCallback((runId: string, patch: Partial<OrchestratorSessionStatus>) => {
     const cleaned = omitUndefined(patch);
@@ -117,6 +146,66 @@ export function OrchestratorPanel(): JSX.Element {
       setBanner({ type: "error", message: buildErrorMessage("Unable to refresh orchestrator runs", error) });
     }
   }, []);
+
+  const triggerPromptsFollowUp = useCallback(
+    (runId: string) => {
+      clearPromptsFollowUp();
+      promptsFollowUpAttemptsRef.current = 0;
+
+      const check = async (): Promise<void> => {
+        if (selectedRunIdRef.current !== runId) {
+          clearPromptsFollowUp();
+          return;
+        }
+        try {
+          const latestStatus = await getOrchestratorRun(runId);
+          mergeRunSnapshot(runId, latestStatus);
+          if (selectedRunIdRef.current === runId) {
+            setStatus(latestStatus);
+          }
+          if (latestStatus.prompts_ready) {
+            try {
+              const envelope = await getOrchestratorPrompts(runId);
+              if (selectedRunIdRef.current === runId) {
+                setPrompts(envelope);
+                setBanner({ type: "info", message: "Prompt bundle generated." });
+              }
+            } catch (loadError) {
+              if (selectedRunIdRef.current === runId) {
+                setBanner({ type: "error", message: buildErrorMessage("Unable to load prompts", loadError) });
+              }
+            }
+            await refreshRuns();
+            clearPromptsFollowUp();
+            return;
+          }
+          if (promptsFollowUpAttemptsRef.current >= PROMPTS_FOLLOW_UP_MAX_ATTEMPTS - 1) {
+            if (selectedRunIdRef.current === runId) {
+              setBanner({
+                type: "error",
+                message:
+                  "Prompt generation is still pending after several checks. Try again or inspect the orchestrator service.",
+              });
+            }
+            clearPromptsFollowUp();
+            return;
+          }
+          promptsFollowUpAttemptsRef.current += 1;
+          promptsFollowUpTimerRef.current = setTimeout(() => {
+            void check();
+          }, PROMPTS_FOLLOW_UP_INTERVAL_MS);
+        } catch (pollError) {
+          if (selectedRunIdRef.current === runId) {
+            setBanner({ type: "error", message: buildErrorMessage("Unable to check prompt progress", pollError) });
+          }
+          clearPromptsFollowUp();
+        }
+      };
+
+      void check();
+    },
+    [clearPromptsFollowUp, mergeRunSnapshot, refreshRuns, setBanner, setPrompts, setStatus],
+  );
 
   useEffect(() => {
     void refreshRuns();
@@ -288,6 +377,7 @@ export function OrchestratorPanel(): JSX.Element {
 
   const handleSelectRun = useCallback(
     async (runId: string) => {
+      clearPromptsFollowUp();
       if (!runId) {
         setSelectedRunId(null);
         setStatus(null);
@@ -303,7 +393,7 @@ export function OrchestratorPanel(): JSX.Element {
         /* errors surfaced via respective handlers */
       }
     },
-    [loadSession],
+    [loadSession, clearPromptsFollowUp],
   );
 
   const handleCreateRun = useCallback(async () => {
@@ -465,21 +555,32 @@ export function OrchestratorPanel(): JSX.Element {
     if (!selectedRunId) {
       return;
     }
+    const runId = selectedRunId;
+    clearPromptsFollowUp();
     setBusyAction("prompts");
     setBanner(null);
     try {
-      const envelope = await generateOrchestratorPrompts(selectedRunId);
+      const envelope = await generateOrchestratorPrompts(runId);
+      clearPromptsFollowUp();
       setPrompts(envelope);
-      mergeRunSnapshot(selectedRunId, { prompts_ready: true, updated_at: new Date().toISOString() });
+      mergeRunSnapshot(runId, { prompts_ready: true, updated_at: new Date().toISOString() });
       setBanner({ type: "info", message: "Prompt bundle generated." });
       await refreshRuns();
-      await loadSession(selectedRunId);
+      await loadSession(runId);
     } catch (error) {
-      setBanner({ type: "error", message: buildErrorMessage("Unable to generate prompts", error) });
+      if (error instanceof HttpError && error.status === 504) {
+        setBanner({
+          type: "info",
+          message: "Prompt generation is taking longer than expected. We'll keep checking and refresh when it's ready.",
+        });
+        triggerPromptsFollowUp(runId);
+      } else {
+        setBanner({ type: "error", message: buildErrorMessage("Unable to generate prompts", error) });
+      }
     } finally {
       setBusyAction(null);
     }
-  }, [selectedRunId, refreshRuns, loadSession, mergeRunSnapshot]);
+  }, [selectedRunId, clearPromptsFollowUp, refreshRuns, loadSession, mergeRunSnapshot, triggerPromptsFollowUp]);
 
   const handleFinalize = useCallback(async () => {
     if (!selectedRunId) {
@@ -516,6 +617,7 @@ export function OrchestratorPanel(): JSX.Element {
     if (!selectedRunId) {
       return;
     }
+    clearPromptsFollowUp();
     setBusyAction("delete");
     setBanner(null);
     try {
@@ -534,7 +636,7 @@ export function OrchestratorPanel(): JSX.Element {
     } finally {
       setBusyAction(null);
     }
-  }, [selectedRunId, refreshRuns]);
+  }, [selectedRunId, refreshRuns, clearPromptsFollowUp]);
 
   return (
     <div className="space-y-6">
