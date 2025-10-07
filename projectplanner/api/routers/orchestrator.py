@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 from projectplanner.logging_utils import get_logger
 from projectplanner.models import IngestionRequest
@@ -59,11 +59,12 @@ async def get_run(run_id: str) -> OrchestratorSessionStatus:
         raise  # unreachable
 
 
-@router.delete("/runs/{run_id}", status_code=204)
-async def delete_run(run_id: str) -> None:
+@router.delete("/runs/{run_id}", status_code=204, response_class=Response)
+async def delete_run(run_id: str) -> Response:
     deleted = orchestrator_service.discard_session(run_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Run {run_id} was not found.")
+    return Response(status_code=204)
 
 
 @router.get("/runs/{run_id}/summary", response_model=OrchestratorSummaryEnvelope)
@@ -167,3 +168,4 @@ async def get_result(run_id: str) -> OrchestratorResult:
     except Exception as error:
         _handle_error(run_id, error)
         raise
+
