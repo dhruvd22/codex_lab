@@ -18,6 +18,8 @@ from projectplanner.orchestrator.models import (
 
 LOGGER = get_logger(__name__)
 
+MAX_CANDIDATE_PATH_CHARS = 512
+
 
 class CodingOrchestrator:
     """Coordinates the end-to-end milestone and prompt workflow."""
@@ -234,14 +236,44 @@ class CodingOrchestrator:
 
     @staticmethod
     def _read_blueprint(source: str | Path) -> str:
-        path = Path(source)
-        if path.exists():
-            text = path.read_text(encoding="utf-8")
-            if not text.strip():
-                raise ValueError(f"Blueprint file {source} is empty.")
-            return text
         if isinstance(source, Path):
+            try:
+                if source.exists():
+                    text = source.read_text(encoding="utf-8")
+                    if not text.strip():
+                        raise ValueError(f"Blueprint file {source} is empty.")
+                    return text
+            except OSError as exc:
+                raise ValueError(f"Unable to read blueprint file {source}: {exc}") from exc
             raise FileNotFoundError(f"Blueprint file not found: {source}")
+
+        if isinstance(source, str):
+            inline_text = source
+            stripped = inline_text.strip()
+            if not stripped:
+                raise ValueError("Blueprint text cannot be empty.")
+
+            looks_like_path = (
+                len(stripped) <= MAX_CANDIDATE_PATH_CHARS
+                and "\n" not in inline_text
+                and "\r" not in inline_text
+            )
+            if looks_like_path:
+                try:
+                    candidate_path = Path(stripped)
+                except (TypeError, ValueError, OSError):
+                    candidate_path = None
+                else:
+                    try:
+                        if candidate_path.exists():
+                            text = candidate_path.read_text(encoding="utf-8")
+                            if not text.strip():
+                                raise ValueError(f"Blueprint file {candidate_path} is empty.")
+                            return text
+                    except OSError:
+                        candidate_path = None
+            return inline_text
+
         text = str(source)
         if not text.strip():
             raise ValueError("Blueprint text cannot be empty.")
